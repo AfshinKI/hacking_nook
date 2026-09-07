@@ -1,0 +1,31 @@
+Render only the pages the schedule actually shows.
+
+server.py builds all five pages unconditionally, so every regeneration launches
+Chromium five times even when the schedule names one. On a Pi Zero 2 W that is
+roughly 40 seconds per page: three or four minutes of thrashing instead of one
+render.
+
+Applied by upstream/install-on-pi.sh with `git apply`, which fails loudly if
+upstream moves this code rather than silently doing nothing.
+
+diff --git a/server/server.py b/server/server.py
+index 3c89087..d71924a 100644
+--- a/server/server.py
++++ b/server/server.py
+@@ -231,6 +231,16 @@ def main():
+         DailyPage(*geometry),
+         TomorrowPage(*geometry),
+     ]
++    # Each page is a separate Chromium run. Keep only what the schedule shows.
++    scheduled = {
++        image
++        for pool in cfg.schedule.describe().get("pools", {}).values()
++        for image in pool
++    }
++    if scheduled:
++        pages = [page for page in pages if f"{page.name}.png" in scheduled]
++        log.info("rendering %d of 5 pages: %s",
++                 len(pages), ", ".join(page.name for page in pages))
+     # map_url is a constant, so it comes from a StaticSource; the weather
+     # service supplies the rest. Each page declares what it needs in
+     # Page.requires.

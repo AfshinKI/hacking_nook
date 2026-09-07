@@ -1,0 +1,36 @@
+---
+# Config for the upstream weather-cal server, running with our OSM map shim.
+# Copy to config.yaml and edit. See README.md.
+server:
+  port: 8080
+  timezone: America/Edmonton
+display:
+  pools:
+    hourly: [hourly.png]
+    today: [today.png]
+    daily: [daily.png]
+    current: [current.png]
+    tomorrow: [tomorrow.png]
+  schedule:
+    type: times
+    "00:00:00": hourly
+weather:
+  # Keyless. `apikey` is still required by the config loader, but OpenMeteo
+  # ignores it — leave the placeholder.
+  service: openmeteo
+  apikey: "unused"
+  num_hourly_forecasts: 9
+  metric: true
+google:
+  # Also unused: our shim replaces google/api.py with OpenStreetMap tiles.
+  # The keys stay because upstream's config loader requires them to be present.
+  apikey: "unused"
+  staticmaps_mapid: "unused"
+location: Edmonton
+image:
+  width: 600
+  height: 800
+  innerWidth: 600
+  innerHeight: 800
+  innerAlignX: center
+  innerAlignY: center

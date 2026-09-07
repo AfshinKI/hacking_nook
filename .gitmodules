@@ -1,0 +1,15 @@
+[submodule "external/trmnl-nook-simple-touch"]
+	path = external/trmnl-nook-simple-touch
+	url = https://github.com/usetrmnl/trmnl-nook-simple-touch.git
+[submodule "external/nook-dashboard"]
+	path = external/nook-dashboard
+	url = https://github.com/greghare/nook-dashboard.git
+[submodule "external/Nook-weather-NWS"]
+	path = external/Nook-weather-NWS
+	url = https://github.com/Home-Is-Where-You-Hang-Your-Hack/Nook-weather-NWS.git
+[submodule "external/NookManager"]
+	path = external/NookManager
+	url = https://github.com/doozan/NookManager.git
+[submodule "external/inkplate10-weather-cal"]
+	path = external/inkplate10-weather-cal
+	url = https://github.com/chrisjtwomey/inkplate10-weather-cal.git

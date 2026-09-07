@@ -1,0 +1,176 @@
+# server — the thing that does the thinking
+
+Renders an e-ink dashboard to a PNG and serves it over plain HTTP on the LAN.
+Runs happily on a **Raspberry Pi Zero 2 W**; also runs on any laptop.
+
+Plain HTTP is deliberate: Android 2.1 cannot do TLS 1.2 or SNI, so the Nook
+would fail to fetch over HTTPS. Keep this on your own network.
+
+## Run it
+
+```bash
+python3 -m pip install -r requirements.txt      # just Pillow
+cp config.example.json config.json              # then edit lat/lon/timezone
+python3 panel_server.py --config config.json
+```
+
+- `http://<host>:8000/panel.png` — what the Nook fetches
+- `http://<host>:8000/` — self-reloading preview page for your desktop browser
+- `python3 panel_server.py --once out.png` — render one frame and exit
+
+## Deploy to the Pi Zero 2 W
+
+Clone the repo on the Pi and run the installer — it handles apt deps, the
+systemd unit (written for whichever user runs it, in whichever directory the
+clone lives) and starting the service:
+
+```bash
+git clone https://github.com/AfshinKI/hacking_nook.git ~/hacking_nook
+~/hacking_nook/server/install-on-pi.sh
+```
+
+To update later:
+```bash
+cd ~/hacking_nook && git pull && sudo systemctl restart nookpanel
+```
+
+Pillow comes from **apt** (`python3-pil`), not pip: Raspberry Pi OS bookworm is
+PEP 668 externally-managed, and compiling Pillow on a Zero 2 W takes about an
+hour.
+
+Give the Pi a **static IP or DHCP reservation** — the Nook stores a literal URL,
+and you do not want to re-type it on an infrared touchscreen.
+
+## Config
+
+| Key | Meaning |
+|---|---|
+| `latitude`, `longitude` | Where the weather and the map come from |
+| `location_name` | Free text; used by the `simple` layout |
+| `timezone` | IANA name, e.g. `Europe/London` |
+| `units` | `metric` or `imperial` |
+| `layout` | `hourly`, `today` or `simple` — see below |
+| `map_zoom` | 10 = region, 11 = metro (default), 12 = city centre |
+| `map_strength` | How dark the map is, 0–1. Higher is punchier |
+| `landscape` | `false` → 600×800 portrait (native). `true` → rotated to 800×600 |
+| `refresh_seconds` | How often the server re-renders |
+| `port` | HTTP port |
+
+`config.json` is gitignored — it is yours, and future versions will hold tokens.
+
+## Layouts
+
+**`today`** — modelled on Chris Twomey's
+[inkplate10-weather-cal](https://github.com/chrisjtwomey/inkplate10-weather-cal):
+a pale city map bleeding into white, a big outlined weather icon straddling the
+fade, then date, temperature and conditions in rounded hand-lettering, with an
+oversized ghost of the icon watermarked into the bottom corner.
+
+**`hourly`** — the reference project's hourly page at our resolution: a dark
+city map with date, temperature and condition badges down the left, over a
+nine-hour table of icons, times, temperatures, wind arrows and a hatched
+precipitation chart.
+
+**`simple`** — the original dense view: clock, current conditions, three-day
+table. More numbers, less atmosphere.
+
+Switch with `"layout"` in the config, or `--layout` for a one-off render.
+
+## Modules
+
+| File | Does |
+|---|---|
+| `panel_server.py` | HTTP, config, the refresh timer, mirroring |
+| `pagechoice.py` | Which page to show: time of day, and weather advisories |
+| `weather.py` | Open-Meteo client and WMO code phrases |
+| `mapview.py` | Tile fetch, greyscale, fade-to-white, disk cache |
+| `icons.py` | Weather icons, drawn — no icon font or asset pack |
+| `layouts.py` | The two page designs |
+| `fonts.py` | Font lookup with fallbacks |
+
+## Serving the weather-cal pages, and which one
+
+With `renderer_url` set, this server stops drawing pages itself and serves the
+ones the weather-cal renderer produces. **Both run on the same Pi** — that URL
+is `http://127.0.0.1:8082`, a loopback fetch, not a network dependency. Nothing
+outside the Pi is involved once deployed.
+
+The split earns its keep twice over: the renderer redraws once an hour (three
+minutes of Chromium), while this process decides which page to show on every
+refresh; and a render that fails or produces a damaged file never reaches the
+panel.
+
+It picks the page on every refresh:
+
+| Time | Page | Why |
+|---|---|---|
+| 06:00 | `hourly` | Before you leave: what the next nine hours do |
+| 09:30 | `today` | The ambient default, and the longest stretch of the day |
+| 17:00 | `daily` | End of the day: the week ahead |
+| 21:00 | `tomorrow` | Before bed: what you are waking up to |
+
+Override the times with `page_schedule`; each key is the time that page starts.
+
+**Advisories.** If something is about to change that you would want to know
+before going out, it switches to `hourly` regardless of the clock, because that
+is the page that says *when*:
+
+- precipitation starting — currently dry, and ≥ 50% within the window
+- rain turning to snow, or snow to rain
+- a thunderstorm
+- crossing freezing
+- a temperature swing of 8°+ across the window
+- wind rising past 40 km/h
+
+A gradual drift is deliberately *not* an advisory: cloud thickening, or two
+degrees over six hours, is what the day view already shows. Interrupting for
+that is noise.
+
+Advisories are suppressed outside `advisory_from`/`advisory_to` (06:00–22:00 by
+default) — nobody is heading out at 03:00, and the overnight `tomorrow` page is
+more useful then. Set `"advisories": false` to follow the clock alone.
+
+### The panel never goes blank
+
+Each fetched page is fully decoded before it is served, so a truncated or
+half-written render is rejected rather than displayed. On any failure the
+**previous good image keeps being served**, with its age logged. If there is no
+previous image at all — a cold start while the renderer is down — this server
+draws the page itself with the Pillow layouts in `layouts.py`, so the worst case
+is a simpler dashboard, never an empty screen.
+
+Thresholds are all overridable: `advisory_hours`, `precip_probability`,
+`precip_dry_probability`, `temp_swing`, `wind_speed`.
+
+## Design notes
+
+- Output is 8-bit greyscale (`L`), pure black on white. The panel has 16 grey
+  levels and very little contrast headroom; anti-aliased black text on white is
+  the only thing that reads well from across a room.
+- Nothing moves, nothing animates. A full e-ink refresh takes ~800 ms and
+  flashes the screen inverse.
+- Weather is [Open-Meteo](https://open-meteo.com/): no API key, no account.
+- The map is OpenStreetMap raster tiles, greyscaled and lightened. It is fetched
+  **once per location** and cached in `.cache/` — the map never changes, so this
+  stays within OSM's tile usage policy and makes every later render instant.
+  CARTO's `light_all` would match the reference more closely but now requires an
+  API key, and Wikimedia's tiles 403 third parties.
+- The upstream project renders **HTML in headless Chrome** (Chart.js + rough.js
+  for the sketchy bars) against AccuWeather/OpenWeatherMap and Google Static
+  Maps. None of that fits here: Chromium will not fit in a Pi Zero 2 W's 425 MB
+  alongside anything else, and all three services want API keys. The designs are
+  ported to Pillow instead, against keyless Open-Meteo and OSM.
+- The hourly precipitation bars scale to the wettest hour in the window, with a
+  floor of 40%, so a dry day still draws a chart rather than a flat line. Every
+  bar carries its true percentage.
+- Icons are drawn, not downloaded: a silhouette is dilated to make a heavy
+  outline, so the union of a cloud's lobes gets one clean edge instead of seams.
+  Chunky outlines survive 16 grey levels far better than detailed pictograms.
+- The server keeps serving the last good render if a fetch fails, so a flaky
+  network shows stale weather rather than an error screen.
+
+## Where this is going
+
+Next additions, in order: a calendar column (ICS/CalDAV feed), then optional
+Home Assistant entities, then per-device layouts. See
+[../docs/04-project-ideas.md](../docs/04-project-ideas.md).

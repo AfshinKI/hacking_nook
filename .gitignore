@@ -1,0 +1,44 @@
+# Device backups — huge, and contain personal data. Keep them off the repo.
+backups/
+*.img
+*.img.gz
+*.tar.gz
+
+# Firmware / recovery images we download
+downloads/
+*.zip
+*.apk
+
+# Build output
+build/
+out/
+*.class
+*.dex
+__pycache__/
+.venv/
+venv/
+
+# Secrets: API keys, HA tokens, Wi-Fi creds
+.env
+*.local.json
+app.json
+secrets.*
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+
+# Android Ant build output and machine-local SDK paths
+app/bin/
+app/gen/
+app/local.properties
+app/ant.properties
+
+# Server config (yours, and will hold tokens)
+server/config.json
+app/.androidhome/
+server/.cache/
+upstream/config.yaml
+upstream/.venv/
+upstream/run/

@@ -1,0 +1,22 @@
+{
+  "latitude": 51.5074,
+  "longitude": -0.1278,
+  "location_name": "London",
+  "timezone": "Europe/London",
+  "units": "metric",
+  "layout": "hourly",
+  "map_zoom": 12,
+  "map_strength": 0.7,
+  "landscape": false,
+  "refresh_seconds": 300,
+  "port": 8000,
+  "_comment": "renderer_url points at weather-cal on THIS machine. Unset it to draw pages here instead.",
+  "renderer_url": "http://127.0.0.1:8082",
+  "advisories": true,
+  "page_schedule": {
+    "06:00": "hourly",
+    "09:30": "today",
+    "17:00": "daily",
+    "21:00": "tomorrow"
+  }
+}

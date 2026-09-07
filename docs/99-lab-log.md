@@ -1,0 +1,485 @@
+# 99 — Lab log
+
+Append-only. One entry per session. Record what was *actually done*, what broke,
+and the exact commands — future-us will not remember.
+
+Template:
+
+```
+## YYYY-MM-DD — <what we tried>
+Device: BNRV3xx, FW x.x.x, rooted via <method>
+Goal:
+Did:
+Result:
+Broke / gotchas:
+Next:
+```
+
+---
+
+## 2026-09-06 — Project kickoff (no hardware touched)
+Device: not yet identified — need model + firmware from Settings → Device Info
+Goal: survey the ecosystem, decide an approach, set up the repo
+Did: web research (see [01-research-landscape.md](01-research-landscape.md)),
+created this repo, docs, the `nook-nst` skill, and submodules under `external/`
+Result: plan is Phoenix phase 4 root → server-rendered 800×600 dashboard →
+our own API-7 client. Native Linux / postmarketOS ruled out (no port exists).
+Broke: nothing. XDA blocks scripted fetching, so the Phoenix thread must be read
+manually in a browser.
+Next: read Settings → Device Info on the actual Nook and fill in model +
+firmware here; download the matching Phoenix phase-4 image; make a backup.
+
+## 2026-09-06 — Toolchain proven, NookPanel v0.1, server rendering
+Device: **BNRV300, FW 1.2.2** (confirmed by owner). Not yet rooted, not yet
+visible over USB.
+Goal: stand up both halves of the "server renders, Nook displays" design without
+needing the device.
+Did:
+- Checked USB: `lsusb` shows **no vendor 2080 device** and `lsblk` shows no ~2 GB
+  volume, so the Nook is not enumerating. `adb` is also not installed on the
+  workstation. See [07-hardware-checklist.md](07-hardware-checklist.md).
+- Built a pinned **2014 ADT bundle container** (`app/tools/Dockerfile`) and
+  proved an API-7 APK builds: 45 KB, `aapt dump badging` reports
+  `sdkVersion:'7' targetSdkVersion:'7'`.
+- Wrote **NookPanel v0.1** (`app/`): fullscreen fetch-and-display, settings
+  screen, tap menu.
+- Wrote the **dashboard server** (`server/panel_server.py`): Open-Meteo weather,
+  no API key, renders 600×800 greyscale PNG, ~20 KB. Verified a live render.
+Result: both halves work on the workstation. Only the device is blocking.
+Broke / gotchas:
+- ADT bundle files unpack root-only → `chmod -R a+rX` in the Dockerfile, else
+  running the container as your UID fails with "Permission denied".
+- JDK 8 required; newer JDKs break the 2014 Ant scripts.
+- A `docker run -v $PWD/app:...` against a non-existent path creates it **owned
+  by root**. Create host directories before mounting.
+Next:
+1. Work out why the Nook is not enumerating over USB (charge-only cable?).
+2. `sudo apt install android-tools-adb`.
+3. Source a 2–32 GB microSD card — **hard blocker for rooting**.
+4. Download `NST_Phase4_122.zip` from the Phoenix Project thread.
+
+## 2026-09-06 — Server live on the Pi Zero 2 W
+Host: `pi2` → **raspi-dev**, 192.168.4.42, Raspbian bookworm (armv7l),
+Python 3.11, 425 MB RAM, 24 GB free.
+Goal: get the dashboard server running as a service on the Pi.
+Did:
+- Surveyed the Pi first. It already runs an unrelated service of its own on
+  **port 5050**. Our server uses 8000, so **there was no need to disable
+  anything** — both run side by side.
+- The repo is public, so the Pi clones over **HTTPS**; its `id_rsa` is not
+  registered with GitHub and does not need to be.
+- Wrote `server/install-on-pi.sh` (idempotent) instead of the hardcoded systemd
+  unit, and ran it: installs `python3-pil` + `fonts-dejavu-core` from apt,
+  generates the unit for the invoking user and clone path, enables and starts it.
+- Config set for **Edmonton** (53.5461, -113.4938, America/Edmonton, metric).
+Result: `curl http://192.168.4.42:8000/panel.png` → **HTTP 200, 19,755 bytes,
+600×800 8-bit greyscale, 42 ms**. Live local weather and correct local time.
+The Pi's own service on 5050 still answers 200.
+Broke / gotchas:
+- Pillow must come from **apt**, not pip — bookworm is PEP 668
+  externally-managed, and compiling Pillow on a Zero 2 W takes ~an hour.
+- `server/config.json` is gitignored, so `git pull` on the Pi will never clobber
+  the local settings.
+Next:
+- Give the Pi a **DHCP reservation** for 192.168.4.42. The Nook stores a literal
+  URL and re-typing it on an infrared touchscreen is miserable.
+- Still blocked on the Nook itself: USB enumeration, adb, and a microSD card.
+Update the Pi with:
+```
+cd ~/hacking_nook && git pull && sudo systemctl restart nookpanel
+```
+
+## 2026-09-06 — Nook enumerating; user data backed up
+Device: BNRV300, FW 1.2.2, **not rooted**, connected over USB.
+Goal: get the device visible and preserve anything we could lose.
+Did:
+- `lsusb` now shows `ID 2080:0003 Barnes & Noble NOOK Simple Touch`. The earlier
+  invisibility was the cable/connection, as suspected.
+- Two volumes appear: `/dev/sdc` 240 MB `NOOK` (internal user partition) and
+  `/dev/sdd` 1.8 GB `NOOGIE` (the 2 GB microSD in the device).
+- The SD card is labelled `NOOGIE` — the classic NST rooting image — but holds
+  only `System Volume Information`. Previously used with noogie, since wiped.
+  **Free to reuse.**
+- Copied both volumes to `backups/2026-09-06/` (41 MB + 40 KB, gitignored).
+  Includes `.devicesalt` and `.adobe-digital-editions/activation.xml`, which are
+  device-identity files worth keeping.
+- Wrote `tools/flash-sd.sh`: refuses non-removable, non-USB, partition-rather-
+  than-disk, and >64 GiB targets, and requires retyping the device name.
+Result: device confirmed healthy and stock; user data safe.
+Broke / gotchas:
+- **The rooting image cannot be fetched automatically.** `doozan.com` returns
+  404, GitHub has no release assets, and the 1.2.2-capable images are XDA
+  attachments / in-post Dropbox links behind Cloudflare and a login.
+- Building NookManager from source is also a dead end: its readme requires a
+  **32-bit Linux host** and `build.sh` downloads a 2013 Buildroot from dead URLs.
+- `adb` still not installed locally (needs sudo). Not urgent — stock NST has ADB
+  disabled anyway; it only matters after rooting.
+Next:
+1. **Download a 1.2.2-capable rooting image by hand** into `downloads/`.
+2. Move the SD card into the USB card reader.
+3. `./tools/flash-sd.sh downloads/<image>.img /dev/sdX`
+4. Power the Nook off, insert card, power on, take the full backup from the
+   tool's own menu *before* rooting.
+
+## 2026-09-06 — NookManager 1.2.2 image obtained and verified
+Goal: get a rooting image that works on FW 1.2.2.
+Decision: **NookManager in-place root**, not Phoenix phase 4. This device has the
+owner's library, its own B&N registration and an Adobe DE activation; Phoenix
+restores someone else's CWM image and would wipe all three. Phoenix stays as the
+fallback if NookManager fails.
+Did:
+- Plain HTTP clients get 403 from XDA (Cloudflare). The in-app browser loaded the
+  thread fine, which surfaced smjohn1's Dropbox link.
+- Downloaded `downloads/NookManager1.2.2.img`, 67,092,480 bytes,
+  sha256 `f33aca9eb9bc256e07399500c2a939815ca421ae090db265bbb98a5b63cc0253`.
+- Verified without mounting (no sudo) by walking the FAT32 root directory in
+  Python: unpartitioned FAT32, label `NookManager`, containing
+  `custom/ files/ hooks/ menu/ scripts/` — an exact match for doozan's upstream
+  tree in `external/NookManager/NookManager/` — plus `MLO` (OMAP first-stage
+  bootloader) and `BOOT.SCR`.
+Result: image in hand and plausible. Not yet written to the card.
+Next:
+1. Move the SD card from the Nook into the USB card reader.
+2. `lsblk` to identify it, then
+   `./tools/flash-sd.sh downloads/NookManager1.2.2.img /dev/sdX`.
+3. Nook **powered off** → insert card → power on.
+4. **Backup first** from NookManager's own menu, then Root, then enable ADB.
+
+## 2026-09-06 — NookManager hangs at "loading..."; root-caused
+Symptom: card written with `tools/flash-sd.sh`, Nook boots, shows the
+**NookManager splash and "loading..."**, then nothing. Ever.
+Did:
+- Ruled out a bad write: the card came back labelled `NookManager` with `MLO`,
+  `boot.scr`, `uImage`, `uRamdisk`, and the `custom/ files/ hooks/ menu/
+  scripts/` tree all present and correct.
+- Extracted the boot ramdisk to read what runs after the splash: stripped the
+  64-byte u-boot header off `uRamdisk`, `gunzip`, `cpio -idm`.
+- `init.rc` starts `/sbin/system_ready`, which does
+  `mount -t vfat -o ro /dev/block/mmcblk1p1 /sdcard`, rsyncs the SD's scripts to
+  `/tmp/sdcache`, then runs `/tmp/sdcache/hooks/system_ready` — the hook that
+  draws the menu.
+- Parsed sector 0 of the downloaded image: boot signature `55aa`, OEM id
+  `mkdosfs`, **all four MBR partition entries zero**. It is a bare FAT32
+  *filesystem* image, not a whole-disk image.
+Root cause: written to the whole disk, the card has no `mmcblk1p1`. The mount
+fails silently, `/tmp/sdcache` stays empty, the menu hook never runs, and e-ink
+holds the last frame — so a fully-booted device looks frozen.
+u-boot boots anyway because `fatload mmc 0` reads a filesystem at sector 0.
+`scripts/format_unused_sdcard` corroborates the intended layout: p1 = NookManager,
+p2 = created later in free space for `backup.full.gz`.
+Fix: `tools/flash-sd.sh` now detects a missing partition table, writes an MBR
+(`63,131040,c,*` — 63 MiB FAT32 LBA, bootable) and dd's the filesystem into
+**p1**. On this 2 GB card that leaves ~1.75 GB free, ample for the backup.
+Also worth knowing: `init.rc` sets `persist.service.adb.enable 1` and runs
+`adbd`, so **NookManager itself serves ADB over USB**. That is the way to tell
+"hung" from "booted but not drawing" next time — check `adb devices`.
+Next: re-flash with the fixed script, boot, expect the "Enable Wireless?" prompt.
+
+## 2026-09-06 — Rooted, app installed, dashboard rendering on the panel
+Device: BNRV300, FW 1.2.2, **rooted** via NookManager 1.2.2 (after the
+partition-table fix). Wi-Fi 192.168.4.78.
+Result: **end-to-end working.** The Pi renders, the Nook fetches and displays.
+Did:
+- Confirmed root: `adb shell id` → `uid=0(root)`. adbd runs as root
+  (`ro.secure=0`), so no `su` dance is needed for tooling.
+- NookManager also installed ReLaunch (`com.harasoft.relaunch`), ADBKonnect,
+  Superuser (`com.noshufou.android.su`) and **NTMM** (`org.nookmods.ntmm`).
+- Nook pings the Pi; Pi's log shows `192.168.4.78 "GET /panel.png" 200`.
+- Wrote `tools/screenshot.sh` — Android 2.1 has no `screencap`, so it dd's
+  `/dev/graphics/fb0` (600x1600 virtual = two 600x800 pages, 16 bpp RGB565,
+  stride 1200) and converts the first page with Pillow.
+- Wrote `tools/push-config.sh` to set the image URL over adb instead of typing
+  it on the infrared touchscreen.
+- Enabled ADB over Wi-Fi: `adb tcpip 5555` → `adb connect 192.168.4.78:5555`.
+Gotchas, all of which cost time:
+- **Android 2.1's toolbox is threadbare.** No `ls -ld`, no `mkdir -p`, no
+  `am force-stop`; `chown` wants `user.group`. Use `/system/xbin/busybox` for
+  anything touching the filesystem, and `busybox pkill` instead of force-stop.
+- **`adb shell "cat > file"` hangs forever** — adb never forwards EOF, so cat
+  waits for input that cannot arrive. Write locally and `adb push`.
+- **`INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES` on every reinstall.** The
+  container regenerated `~/.android/debug.keystore` each build. Fixed by
+  mounting a persistent `app/.androidhome`. It must be mounted at
+  **`/home/ubuntu`** specifically: Ant's DebugKeyProvider asks the JVM for
+  `user.home`, which comes from `/etc/passwd` (uid 1000 = `ubuntu`) and ignores
+  `$HOME`. `keytool` also will not create `.android/`, so the Makefile does.
+- **A docker `-v` against a non-existent host path creates it owned by root.**
+  Bit us twice now.
+- **"USB Mode" hides everything.** Connect the Nook to a PC and B&N's fullscreen
+  USB activity comes to the front, pausing our app — so it stops fetching, by
+  design. Verify over Wi-Fi ADB with the cable out, or on a charger.
+App fix: `onResume` used to refetch unconditionally, so anything stealing focus
+(the USB dialog, repeatedly) triggered a fetch and an e-ink refresh — 3 requests
+in 30 s against a 300 s interval. It now only fetches if the current image is
+actually older than the interval.
+Next:
+1. Unplug USB, confirm the panel displays unattended.
+2. v0.2 deep sleep — see [06-our-own-app.md](06-our-own-app.md).
+3. Still open: was a full backup taken from NookManager's menu before rooting?
+
+## 2026-09-06 — "where is the app?" — the stock home has no app drawer
+Symptom: NookPanel installed and running, but invisible in the Nook's own
+application list.
+Cause: not a bug. `com.bn.nook.home` only lists B&N content — there is no
+general app drawer, so sideloaded APKs never appear. That is precisely why
+NookManager ships **ReLaunch** (`com.harasoft.relaunch`, launcher activity
+`com.harasoft.relaunch.Main`).
+Did: added `BootReceiver` (`RECEIVE_BOOT_COMPLETED`) so the panel starts itself
+after boot when a URL is configured — the right behaviour for a wall display,
+and it sidesteps the launcher question entirely.
+Verified: reinstall succeeded **in place** (the persistent keystore fix holds),
+app relaunched, Pi logged the fetch, and a framebuffer capture shows the
+dashboard with the tap menu over it.
+Note: `adb` over Wi-Fi drops out when the device sleeps; `adb connect` then
+blocks rather than failing fast. Wrap it in `timeout`.
+
+## 2026-09-06 — Panel redesigned after inkplate10-weather-cal
+Goal: match the look of Chris Twomey's
+[inkplate10-weather-cal](https://github.com/chrisjtwomey/inkplate10-weather-cal)
+(the dashboard from the Tom's Hardware piece).
+Did: split the renderer into `weather / mapview / icons / layouts / fonts` and
+added a `today` layout — pale city map fading to white, big outlined weather
+icon straddling the fade, date / temperature / conditions in rounded
+hand-lettering, oversized ghost icon watermarked into the bottom corner. The old
+dense view is still there as `layout: "simple"`.
+Findings:
+- **CARTO `light_all` now requires an API key** — anonymous tiles come back as a
+  watermarked "API KEY REQUIRED" image, which silently looks like a rendering
+  bug. **Wikimedia** (`maps.wikimedia.org/osm-intl`) returns **403** to third
+  parties. Standard **OpenStreetMap** tiles still work keyless, so we greyscale
+  and lighten those instead. Fetched **once per location** and cached in
+  `server/.cache/`, which keeps us inside OSM's usage policy.
+- **Icons are drawn, not downloaded.** Draw the silhouette into a mask, dilate
+  it for the outline, then paint white inside and black in the ring — that gives
+  one clean edge around the *union* of a cloud's lobes instead of visible seams.
+  Chunky outlines also survive 16 grey levels far better than detail.
+  Watch the dilation: it eats roughly `2 * stroke` of any gap, which merged the
+  fog bars and turned snowflakes into blobs until they were respaced.
+- **Font:** `fonts-comic-neue` is the closest rounded hand-lettered face in
+  Debian. `fonts-humor-sans` has no `all.deb` under the pool path guessed, so it
+  was skipped. For local dev without root, `dpkg-deb -x` the .deb into
+  `~/.local/share/fonts`.
+Deployed: Pi pulled, `fonts-comic-neue` installed, service restarted, and the
+Nook fetched the new image (`192.168.4.78 "GET /panel.png" 200`).
+Gotcha: **`adb tcpip 5555` does not survive a reboot.** After the power-cycle
+test the port was closed. Re-enable by plugging USB and running `adb tcpip 5555`
+again, or use **ADBKonnect** on the device.
+Next: look at it on the actual panel — `map_zoom` and the lightening factor in
+`mapview.py` are the two knobs if the map reads as mud or as invisible.
+
+## 2026-09-06 — Hourly layout; the map was washed out because OSM is light-themed
+Ask: match the reference project's **hourly** page, and fix the pale map.
+Did: added `external/inkplate10-weather-cal` as a submodule and read
+`server/views/hourly.py` + `detailed.css` for the real layout rules.
+
+**Why "use the repo directly" does not work here.** Upstream renders **HTML in
+headless Chrome** — Chart.js and rough.js draw the sketchy precipitation bars —
+against AccuWeather/OpenWeatherMap plus Google Static Maps. Chromium will not
+fit in a Pi Zero 2 W's 425 MB alongside anything else, and all three services
+want API keys. So the *design* is ported to Pillow against keyless Open-Meteo
+and OSM, following upstream's rules exactly:
+- hour labels on every second column; temperatures and wind speeds suppressed
+  when they repeat the previous column
+- wind arrow size `16 + 14 * min(kmh/80, 1) ** 0.5`, rotated `(deg + 180) % 360`
+  because Open-Meteo reports where the wind comes *from*
+- precipitation labels only on even columns, skipped when repeated, and hidden
+  above 80% where they would clip
+
+**Root cause of the washed-out map:** OSM's standard layer is *light-themed* —
+land and buildings are essentially white and only thin lines are dark. No tone
+curve fixes that, because darkening the land darkens the roads with it, and
+`autocontrast` is a no-op since road labels already reach black. **Inverting**
+gives exactly what the reference's custom dark Google style does: dark land and
+water, light roads and labels. Now `map_style` ("light"/"dark") plus a
+`map_strength` knob, defaulting to 0.70 for `hourly` and 0.55 for `today`.
+
+Other notes:
+- The fade mask is left+bottom for `hourly`, to clear a white margin for the
+  overlaid badges. The left edge uses a **square-root** falloff — the quadratic
+  used at the bottom keeps the map dark until the last few columns.
+- Precipitation bars scale to the wettest hour in the window with a **floor of
+  40%**, so a dry day still draws a chart instead of a flat line. Every bar
+  carries its true percentage, so nothing is hidden.
+- `wind_arrow` draws at 4x and downsamples: PIL has no anti-aliased polygons.
+Deployed and verified: Pi renders `hourly` in ~1.5 s, 101 KB.
+
+## 2026-09-06 — Running the real upstream server, with one file swapped
+Decision: use upstream's own renderer rather than our port, patching out its
+only hard blocker. Measured facts that shaped it:
+- Upstream renders **HTML in headless Chromium via Selenium**; the published
+  image `ghcr.io/chrisjtwomey/inkplate10-weather-cal-server` is **linux/amd64
+  only and 1.4 GB**, so it cannot run on the Pi Zero 2 W (armv7l, 425 MB).
+- **Weather needs no key**: upstream ships an `openmeteo` provider. Its config
+  loader still requires a `weather.apikey` to be present — a placeholder does.
+- **Google Static Maps is a hard requirement.** `server.py:206` constructs
+  `GoogleAPIService(cfg.google_apikey)` unconditionally and dies with
+  `ValueError: Invalid API key provided.` before rendering anything.
+Did: `upstream/google_api_shim.py` replaces `google/api.py` with the same class
+and the same contract — `get_static_map_local_src(map_id, location)` writes a
+PNG under `views/html/map-cache/` and returns the path relative to
+`views/html/` — backed by OSM tiles and Open-Meteo geocoding. Our
+`server/mapview.py` is copied into the image as `nook_mapview.py`, so the tile
+code is shared rather than duplicated. `upstream/Dockerfile` layers both onto
+upstream's image; nothing else is modified.
+Result: all five pages render at 600×800 with no API keys at all.
+Findings:
+- `image.width/height` are configurable, so it renders **natively** at our
+  resolution — no resize step needed.
+- Upstream quantises to **4 grey levels with Floyd–Steinberg** by default
+  (`epd_server/quantise.py`). The NST has 16, so there is headroom if the
+  dithering ever looks too noisy.
+- `hourly.py` sizes the wind arrows in raw `vw` while the rest of the layout
+  uses `--inner-vw`. When `innerWidth != width` those diverge and the table
+  overflows. Keeping them equal (600/600) avoids it, which is the config we run.
+- Zoom 11 was too far out to read; **13** shows the river valley and downtown.
+Also added `mirror_url` to `server/panel_server.py`: with it set, the Pi stops
+rendering and instead fetches that URL on its timer, **keeping the last good
+image** if the fetch fails. That is how the desktop-only container feeds the
+always-on Pi without the panel breaking when the desktop is off.
+
+## 2026-09-06 — Line-art map drawn from OSM vector data
+Ask: make the map look like a printed street-map poster — black streets on
+white, solid black river.
+Constraint: the two reference pictures supplied were a watermarked Alamy stock
+photo and a Redbubble print listing. Both are copyrighted artwork, so neither
+could be used. The *style* is reproducible from open data, so that is what we
+built.
+Did: `server/linemap.py` queries the **Overpass API** for road and water
+geometry in a bbox and draws it — roads as black lines weighted by class, water
+as solid black — at 2x, downsampled for anti-aliasing (PIL has no anti-aliased
+lines). Optional place-name plate, as on the posters.
+Why not a tile server: every black-and-white raster basemap that served this
+style is gone. Stamen Toner moved to Stadia and needs a key,
+`tiles.wmflabs.org/bw-mapnik` no longer resolves, Tracestrack 403s. Esri's
+World Light Gray Canvas is keyless and close to the *light* reference, but its
+water is light grey where the reference is dark.
+Gotcha worth remembering: Overpass returns a water **relation**'s outer
+boundary as separate ways in arbitrary order and direction. Filling each one on
+its own closes an open line across the whole map — the North Saskatchewan came
+out as a black band from corner to corner. `_stitch_rings` chains members
+end-to-end and keeps only rings that actually close.
+Cost: one query per location, ~34,000 elements and ~13 s for Edmonton at zoom
+12, then cached as JSON and as a PNG. Overpass is a shared free service — never
+poll it.
+This is also the right choice for the panel: 16 grey levels, and upstream
+dithers to 4, so pure black on white has nothing to dither. `lineart` is now the
+default style.
+
+## 2026-09-06 — Upstream's renderer running natively on the Pi Zero 2 W
+Goal: stop depending on the desktop. Run upstream's Chromium-based renderer on
+the always-on Pi.
+Key finding: **Docker was the blocker, not the hardware.** Raspberry Pi OS ships
+`chromium` and `chromium-driver` in apt (152.x), so a venv against those avoids
+both the amd64-only image and a container runtime we cannot spare 425 MB for.
+`upstream/install-on-pi.sh` does it all; see `upstream/README.md`.
+Measured on the Pi:
+- Overpass fetch + line-art draw: **77 s**, once, then cached.
+- Chromium render: **~35-45 s per page**, stable, **no OOM**.
+- All five pages: ~3 min. With the page-filter patch, **one page: ~30 s**.
+- Memory at rest with all three services up: 122 MB of 425 used, 57 MB swap.
+What it took:
+- **Swap 512 MB → 2 GB.** `dphys-swapfile` also caps at `CONF_MAXSWAP`, which
+  has to be raised too or `CONF_SWAPSIZE` is silently ignored.
+- **Pillow and PyYAML from apt, not pip** — no armv7 wheels, and building them
+  here takes about an hour. venv created with `--system-site-packages`.
+- Upstream's exact version pins relaxed, for the same reason.
+Two bugs worth remembering:
+- `server.py` line 30 sets `cwd = os.path.dirname(os.path.realpath(__file__))`,
+  and reads `config.yaml` from there. There is no `--config` flag, so systemd's
+  `WorkingDirectory` does nothing. The real config lives in `upstream/run/` and
+  is symlinked into the submodule.
+- `server.py` builds **all five pages unconditionally**, ignoring the schedule's
+  pools, so every regeneration launched Chromium five times.
+  `upstream/patches/0001-render-only-scheduled-pages.patch` filters them.
+  Applied with `git apply`, so it fails loudly if upstream moves the code.
+- `git -C <dir> apply <patch>` resolves the patch path **relative to `<dir>`**,
+  not the shell's cwd. Pass an absolute path or it silently does nothing.
+Wiring: `weather-cal` on :8082 renders; `nookpanel` on :8000 mirrors
+`127.0.0.1:8082/hourly.png` and keeps the last good copy; the Nook is unchanged.
+The Pi's pre-existing service on :5050 is still untouched.
+Regeneration now runs every two hours.
+
+## 2026-09-07 — Page rotation by time of day, with a weather override
+Design: the Nook polls our mirror every 5 minutes, but upstream regenerates
+hourly. So the *choice* of page belongs in the mirror, not in upstream's
+schedule — `server/pagechoice.py`.
+
+Schedule: `06:00` hourly, `09:30` today, `17:00` daily, `21:00` tomorrow.
+09:30 rather than 10:00 because by then the hourly page's first columns are
+already behind you.
+
+Advisory override — **change of kind, not of degree**. Switches to `hourly` for
+precipitation starting (dry now, ≥50% ahead), rain↔snow, thunderstorm, crossing
+freezing, an 8°+ swing, or wind past 40 km/h. Deliberately silent on cloud
+thickening or a couple of degrees of drift: that is what the day view already
+shows. Suppressed 22:00–06:00.
+Verified each branch against synthetic hourly data, and the negative cases
+("steady overcast", "already raining, steady", "gradual 3° drift") correctly do
+not fire. Against Edmonton live it also stayed on `today` — 11-20% drizzle is
+exactly the gradual case.
+
+### Incident: blank panel, and a Chromium crash loop
+Restarting `weather-cal` twice in quick succession left the first regeneration
+still running. Two Chromiums competed and **Selenium's webdriver connection
+timed out at 120 s** — a limit `epd_server.render` does not expose. The service
+exited 1 and, with `RestartSec=30`, began a crash loop of ~3-minute attempts.
+Worse: the mirror had **never** successfully fetched, so it served a zero-byte
+PNG. The panel showed nothing.
+Fixes:
+- `Mirror._degrade()` — keep the last good image, and if there is none, render
+  locally with our own Pillow renderer. A cold start against a dead upstream is
+  no longer a blank screen.
+- Unit: `RestartSec=120`, `TimeoutStopSec=90`, `KillMode=control-group`, so a
+  dying run takes its Chromium children with it and does not tight-loop.
+- Operationally: never `systemctl restart weather-cal` mid-regeneration. Check
+  `journalctl -u weather-cal -n 5` for "Starting http server" first, then
+  `stop`, wait, `start`.
+Cost of four pages: ~2.5 min of Chromium per regeneration, hourly. Memory held
+at ~107 MB of 425 with 47 MB swap.
+
+## 2026-09-07 — "Mirror" was a misleading name
+It described a loopback fetch, but it read as "fetches from another machine",
+which is the opposite of the deployment. Renamed:
+- class `Mirror` → `RenderedPages`
+- config `mirror_base` → `renderer_url` (old keys still honoured)
+Both services are on the Pi. `renderer_url` is `http://127.0.0.1:8082`.
+
+The split is not a network dependency, it is a division of labour: weather-cal
+redraws once an hour (~2.5 min of Chromium for four pages), while the panel
+server decides which page to show on every 5-minute refresh.
+
+Verified the Pi is self-contained: the only URL in any config is
+`http://127.0.0.1:8082`, and both endpoints answer with the desktop's
+development container removed entirely.
+
+Hardened "keep the previous render until a new one succeeds": every fetched page
+is now **fully decoded** before being served. The PNG magic bytes alone pass a
+file that was interrupted part-way through writing; `Image.open(...).load()` is
+the certain check. Tested against a complete PNG, a truncated one, a bare
+header, and an HTML error body — only the first is accepted. On any failure the
+previous good image keeps being served, and on a cold start with no previous
+image the panel server draws the page itself.
+
+## 2026-09-07 — Reboot test, and the cold-start handover
+Verified startup by actually rebooting the Pi rather than trusting
+`is-enabled`. All three units came back on their own within 30 s.
+Added `After=weather-cal.service` to the panel unit — ordering only, not a
+`Wants=`, because the panel runs perfectly well alone by drawing its own pages.
+
+The cold start exercised the fallback for real, which is the sequence worth
+keeping:
+
+| Time | What happened |
+|---|---|
+| 10:34:56 | panel starts, renderer not up yet → `Connection refused` |
+| 10:34:58 | panel draws the page itself — **valid image 22 s after power-on** |
+| 10:38:26 | renderer finishes all four pages (~3.5 min from boot) |
+| 10:40:12 | next refresh picks it up: `serving today (50761 bytes)` |
+
+So a power cut costs the panel about 20 seconds of nothing, then a simpler
+locally-drawn page for four minutes, then the full one. It never shows a blank
+screen and never needs a human.
+
+README rewritten as a setup guide: architecture diagram, Pi setup from a bare
+OS, Nook setup from an unrooted device, and a table of what to change to alter
+what it shows.
