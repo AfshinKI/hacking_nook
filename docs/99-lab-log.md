@@ -546,3 +546,51 @@ both licences permit it, and links rot.
   to zero bytes.** The `until` loop matched a stale log line. Fetch to a temp
   file, decode it, and only then move it into place — the same rule the panel
   server already follows for the pages it serves.
+
+## 2026-09-07 — The renderer was dying at boot on DNS
+Report: "I restarted the server, and it did not run again." True, and not a
+matter of looking too early.
+
+Boot before the fix:
+
+| Time | |
+|---|---|
+| 13:21:47 | `weather-cal` started |
+| 13:21:49 | `URLError: Temporary failure in name resolution` |
+| 13:21:52 | **crashed** — upstream does not catch it, so the process exits |
+| 13:25:11 | restarted, after `RestartSec=120` |
+| 13:27:39 | serving — **six minutes after boot** |
+
+Both units were correctly `enabled`. The cause was
+**`NetworkManager-wait-online` returning in 2.077 s**: it reports the network up
+when the Wi-Fi link associates, which is well before DNS resolves. The renderer
+geocodes its location at startup, so it died on the first lookup. My
+`RestartSec=120` then turned a two-second race into a six-minute outage.
+
+Fix — wait for a name to actually resolve, rather than trusting the target:
+
+```ini
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do getent hosts api.open-meteo.com >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
+```
+
+Bounded at two minutes and exits 0 either way, so a genuinely offline boot still
+starts and retries instead of blocking. `RestartSec` 120 → 30. Both units also
+order after `time-sync.target`: a Pi has no RTC, the clock jumps when NTP syncs
+(`uptime -s` disagreed with the journal by a minute), and page selection is by
+time of day.
+
+Verified by rebooting again:
+
+| Time | |
+|---|---|
+| 15:28:11 | both units started |
+| 15:28:18 | panel drawing its own page — 7 s after boot |
+| 15:31:31 | renderer finished all four pages |
+| — | **0 tracebacks this boot** |
+
+Lesson: `network-online.target` means "a link is up", not "the network works".
+Anything that resolves a name at startup needs its own check.
+
+README gains an **Auto-start** section: how to verify, the power-cut timeline,
+why Wi-Fi is slower than systemd thinks, and what to run when it does not come
+back.
