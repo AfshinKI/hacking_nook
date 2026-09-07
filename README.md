@@ -135,6 +135,24 @@ then re-run the installer. It is safe to run more than once.
 > Give the Pi a **DHCP reservation**. The Nook stores a literal URL, and typing
 > one on an infrared touchscreen is miserable.
 
+### Sharing a Pi with other services
+
+Nothing here assumes a dedicated Pi. It uses **two ports, 8000 and 8082**, and
+nothing else — no global Python packages (the renderer gets its own venv), no
+changes to anything already installed.
+
+```bash
+ss -tlnp | grep -E ':8000|:8082'     # check they are free first
+```
+
+To move them, set `port` in `server/config.json` and `server.port` in
+`upstream/run/config.yaml`, then point `renderer_url` at the new renderer port.
+
+The one thing that is not free is **memory**. Chromium is the whole cost, and
+the installer raises swap to 2 GB for it. On a 512 MB Pi already running
+something substantial, expect the renderer to be slow rather than to fail —
+each page takes about 40 seconds.
+
 ## Auto-start
 
 Both installers register systemd units and enable them, so nothing needs doing
