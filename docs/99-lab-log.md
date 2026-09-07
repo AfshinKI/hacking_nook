@@ -594,3 +594,52 @@ Anything that resolves a name at startup needs its own check.
 README gains an **Auto-start** section: how to verify, the power-cut timeline,
 why Wi-Fi is slower than systemd thinks, and what to run when it does not come
 back.
+
+## 2026-09-07 — Installing on a second Pi found two bugs, and adb now survives reboot
+`nultra` (192.168.4.43) is the real deployment; `pi2` was a test box and is
+being powered down. `nultra` also runs its owner's own services on **5050** —
+ours use 8000 and 8082, the renderer has its own venv, and nothing global is
+touched. The shared cost is memory, which is why swap goes to 2 GB.
+
+### Why the install would not run
+`E: dpkg was interrupted, you must manually run 'sudo dpkg --configure -a'`.
+A previous apt run had left packages half-configured, so every `apt-get` failed
+and the installer died on its first line — with an error that reads as if the
+script produced it. Both installers now run `dpkg --configure -a` in a preflight
+step; it is a no-op when nothing is pending, and took several minutes here
+(pandas, matplotlib).
+
+### Two bugs only a clean machine shows
+- **The unit file was rejected.** `install-on-pi.sh` writes it from an
+  **unquoted** heredoc, so the inline `sh -c` DNS wait had its `$(seq 1 60)`
+  expanded *at install time*. The generated line read `for i in 1` and systemd
+  refused the unit: `Unbalanced quoting`. `pi2` never saw it because its unit
+  had been edited in place rather than generated. Now `upstream/wait-for-dns.sh`
+  — a script has no quoting hazard and can be tested alone.
+- **The generated config named only one page.** Pools listed `hourly`, a
+  leftover from before the rotation, so `today`, `daily` and `tomorrow` returned
+  **207-byte 404 bodies** and the panel fell back to drawing its own. Again,
+  `pi2` worked only because those pools had been expanded by hand. The installer
+  now writes all four plus a matching hourly schedule.
+
+Verified end to end on a from-scratch install: all four pages render, and the
+panel serves upstream's bytes — `panel b38a3a576882 == today b38a3a576882`.
+
+### adb over Wi-Fi that survives a reboot
+`tools/enable-adb-tcp.sh`. `adb tcpip 5555` sets the property on the running
+system only; editing `/init.rc` is also useless because `/` is a **read-only
+ramdisk** rebuilt from `uRamdisk` at every boot. `/data/local.prop` is read by
+init before services start and `/data` persists, so the property sticks. The
+rooter had already commented out adbd's `disabled` flag, so adbd always runs —
+it only needed the port set.
+
+Proof it is the property and not a leftover session: **58 s uptime, port already
+5555**.
+
+**Security:** adb on Android 2.1 predates RSA auth (4.2.2) and adbd runs as
+root, so this is an unauthenticated root shell to anyone on the LAN. `--off`
+reverses it.
+
+Also worth remembering: **USB Mass Storage mode pauses the app.** The foreground
+activity becomes `UMSServerActivity`, the panel stops fetching, and the e-ink
+holds its last frame — which looks exactly like a stale or wrong page.
