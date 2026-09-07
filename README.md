@@ -30,9 +30,7 @@ No cloud, no subscription, no API keys.
 </tr>
 </table>
 
-> Stock photographs, not this build. Photograph your own and replace
-> `docs/images/nook-photo.jpg` — a Nook actually on your wall beats a stock
-> shot. Credits at the bottom.
+> Stock photographs, not this build, Credits at the bottom.
 
 ## The pages
 
