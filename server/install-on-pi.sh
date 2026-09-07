@@ -12,6 +12,14 @@ SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_USER="${SUDO_USER:-$USER}"
 UNIT=/etc/systemd/system/nookpanel.service
 
+echo "==> preflight"
+# A previously interrupted apt run leaves dpkg half-configured, and every
+# apt-get after it fails with "dpkg was interrupted, you must manually run
+# 'sudo dpkg --configure -a'" - an error that reads as if this script produced
+# it. This is a no-op when nothing is pending, and can take a few minutes when
+# something is.
+sudo dpkg --configure -a
+
 echo "==> installing dependencies"
 # Pillow from apt, not pip: bookworm is PEP 668 externally-managed, and building
 # Pillow from source on a Pi Zero 2 W takes the better part of an hour.

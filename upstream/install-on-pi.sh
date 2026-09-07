@@ -17,6 +17,14 @@ RUNDIR="$REPO/upstream/run"
 PORT="${PORT:-8082}"
 SWAP_MB="${SWAP_MB:-2048}"
 
+echo "==> preflight"
+# A previously interrupted apt run leaves dpkg half-configured, and every
+# apt-get after it fails with "dpkg was interrupted, you must manually run
+# 'sudo dpkg --configure -a'" - an error that reads as if this script produced
+# it. This is a no-op when nothing is pending, and can take a few minutes when
+# something is.
+sudo dpkg --configure -a
+
 echo "==> system packages"
 sudo apt-get update -qq
 # Pillow and PyYAML come from apt: neither publishes armv7 wheels, and building

@@ -95,11 +95,12 @@ sudo apt install -y git
 git clone --recurse-submodules https://github.com/AfshinKI/hacking_nook.git ~/hacking_nook
 cd ~/hacking_nook
 
-OSM_MAP_LABEL="Your City" ./upstream/install-on-pi.sh   # renderer (~10 min)
-./server/install-on-pi.sh                                # panel server
+OSM_MAP_LABEL="Edmonton" ./upstream/install-on-pi.sh   # renderer (~10 min)
+./server/install-on-pi.sh                               # panel server
 ```
 
-Then set your location in two files and restart:
+That works as-is — the example config is Edmonton, so copy-paste gives you a
+running panel. **For your own city**, edit the two files and restart:
 
 ```bash
 nano server/config.json          # latitude, longitude, timezone
@@ -113,6 +114,23 @@ Check it:
 journalctl -u weather-cal -f
 curl -o test.png http://localhost:8000/panel.png
 ```
+
+### If the install stops on the first line
+
+```
+E: dpkg was interrupted, you must manually run 'sudo dpkg --configure -a'
+```
+
+A previous apt run on that Pi was interrupted, so every `apt-get` fails until
+it is repaired. The installer now runs `dpkg --configure -a` itself before
+touching apt, but on an older checkout, or if it fails for another reason:
+
+```bash
+sudo dpkg --configure -a       # can take several minutes on a Zero
+sudo apt-get check             # should print nothing
+```
+
+then re-run the installer. It is safe to run more than once.
 
 > Give the Pi a **DHCP reservation**. The Nook stores a literal URL, and typing
 > one on an infrared touchscreen is miserable.

@@ -1,8 +1,8 @@
 {
-  "latitude": 51.5074,
-  "longitude": -0.1278,
-  "location_name": "London",
-  "timezone": "Europe/London",
+  "latitude": 53.5461,
+  "longitude": -113.4938,
+  "location_name": "Edmonton",
+  "timezone": "America/Edmonton",
   "units": "metric",
   "layout": "hourly",
   "map_zoom": 12,
