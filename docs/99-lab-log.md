@@ -483,3 +483,34 @@ screen and never needs a human.
 README rewritten as a setup guide: architecture diagram, Pi setup from a bare
 OS, Nook setup from an unrooted device, and a table of what to change to alter
 what it shows.
+
+## 2026-09-07 — Precipitation chart on the today page
+Ask was "the daily view's bottom half is almost empty". The five-day **daily**
+page is actually dense — rows of icon, temperature bar, precipitation, wind, sun
+hours, sunrise/sunset and UV. The page with the empty lower half is **today**,
+which is also the one on screen 09:30-17:00. Built it there.
+
+`upstream/patches/0002-today-precipitation-chart.patch`:
+- adds an `_extra_body(a, **kwargs)` hook to `SimplifiedPage` so `TodayPage` can
+  append to the content section without reimplementing the whole template
+- adds `hourly_forecasts` to `TodayPage.requires`, which is how the pipeline
+  knows to supply it
+- draws nine hours of precipitation probability as hatched bars
+
+**Inline SVG, not canvas + rough.js.** The hourly page draws its bars in a
+canvas on `window.onload`; that races the screenshot, and a page that renders
+half-drawn is worse than one that is plain. SVG needs nothing to run, and the
+hatch is a `<pattern>` rather than a library.
+
+Two things that needed a second pass:
+- `preserveAspectRatio="none"` stretches the viewBox, which shears text with it.
+  `vector-effect: non-scaling-stroke` on the text elements fixes it.
+- A fixed 0-100% axis made a 20% day read as a flat line under a lot of empty
+  space — the same mistake as the Pillow hourly layout. It now scales to the
+  window's peak, rounded up to a tidy step and floored at 40%, **with the top of
+  scale printed** so the auto-scaling is visible rather than misleading. Every
+  bar keeps its true percentage.
+
+Deployment note: `git apply` a patch that is already applied fails, which is
+correct but reads as an error in a loop over all patches. Check the tree for a
+marker string rather than trusting the exit code.
