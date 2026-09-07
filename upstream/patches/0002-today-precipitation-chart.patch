@@ -13,10 +13,10 @@ content section without reimplementing the whole template.
 
 diff --git a/server/views/html/today-precip.css b/server/views/html/today-precip.css
 new file mode 100644
-index 0000000..93d225c
+index 0000000..3904236
 --- /dev/null
 +++ b/server/views/html/today-precip.css
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,30 @@
 +/* Chance-of-precipitation chart on the today page. */
 +#day-precip {
 +  margin-top: calc(var(--inner-vh) * 1.5);
@@ -45,6 +45,7 @@ index 0000000..93d225c
 +}
 +
 +.day-precip-value { font-size: 30px; }
++.day-precip-scale { font-size: 24px; opacity: 0.5; text-anchor: start; }
 +.day-precip-hour  { font-size: 28px; opacity: 0.7; }
 diff --git a/server/views/simplified.py b/server/views/simplified.py
 index 1d444e7..3eb9cc2 100644
@@ -69,7 +70,7 @@ index 1d444e7..3eb9cc2 100644
  
  
 diff --git a/server/views/today.py b/server/views/today.py
-index 1233ad7..1fbe18c 100644
+index 1233ad7..b09a0b2 100644
 --- a/server/views/today.py
 +++ b/server/views/today.py
 @@ -3,7 +3,7 @@ from .simplified import SimplifiedPage
@@ -81,7 +82,7 @@ index 1233ad7..1fbe18c 100644
  
      def __init__(
          self,
-@@ -27,6 +27,73 @@ class TodayPage(SimplifiedPage):
+@@ -27,6 +27,82 @@ class TodayPage(SimplifiedPage):
      def _css_links(self, a):
          super()._css_links(a)
          a.link(rel="stylesheet", href="tomorrow.css")
@@ -97,6 +98,13 @@ index 1233ad7..1fbe18c 100644
 +        forecasts = kwargs.get("hourly_forecasts") or []
 +        if not forecasts:
 +            return
++
++        probabilities = [f.get("rain_probability") or 0 for f in forecasts]
++        # Fixed 0-100% makes a 20% day look like a flat line. Scale to the
++        # window's peak, rounded up to a tidy step and floored at 40 so a dry
++        # window still reads as a chart. The top of scale is printed, and every
++        # bar keeps its true percentage, so nothing is overstated.
++        scale_max = max(40, min(100, -(-max(probabilities) // 20) * 20))
 +
 +        width, height = 1000.0, 300.0
 +        pad_l, pad_r, pad_b, pad_t = 20.0, 20.0, 54.0, 34.0
@@ -117,16 +125,18 @@ index 1233ad7..1fbe18c 100644
 +                               stroke="#000", **{"stroke-width": "2.4"})
 +
 +                baseline = pad_t + plot_h
-+                # 50% guide, so a bar can be read without counting gridlines
++                # Half-scale guide, so a bar can be read at a glance
 +                a.line(x1=f"{pad_l}", y1=f"{pad_t + plot_h / 2:.1f}",
 +                       x2=f"{width - pad_r}", y2=f"{pad_t + plot_h / 2:.1f}",
 +                       stroke="#000", **{"stroke-width": "1.5",
 +                                         "stroke-dasharray": "6 9",
 +                                         "opacity": "0.35"})
++                a.text(x=f"{pad_l + 4}", y=f"{pad_t - 6:.1f}",
++                       klass="day-precip-scale", _t=f"{scale_max}%")
 +
 +                for i, forecast in enumerate(forecasts):
 +                    probability = forecast.get("rain_probability") or 0
-+                    bar_h = plot_h * probability / 100.0
++                    bar_h = plot_h * probability / scale_max
 +                    x = pad_l + slot * i + (slot - bar_w) / 2
 +
 +                    if bar_h >= 1:
@@ -136,7 +146,7 @@ index 1233ad7..1fbe18c 100644
 +                                   fill=fill, stroke="#000",
 +                                   **{"stroke-width": "3"})
 +
-+                    if probability >= 15:
++                    if probability >= max(5, scale_max * 0.12):
 +                        a.text(x=f"{x + bar_w / 2:.1f}",
 +                               y=f"{baseline - bar_h - 9:.1f}",
 +                               klass="day-precip-value", _t=f"{probability}%")
@@ -155,7 +165,7 @@ index 1233ad7..1fbe18c 100644
  
      def template(self, **kwargs):
          ds = kwargs["daily_summary"]
-@@ -34,6 +101,7 @@ class TodayPage(SimplifiedPage):
+@@ -34,6 +110,7 @@ class TodayPage(SimplifiedPage):
  
          super().template(
              map_url=kwargs["map_url"],
