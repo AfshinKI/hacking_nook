@@ -113,12 +113,10 @@ Wants=network-online.target
 Type=simple
 User=$USER
 WorkingDirectory=$RUNDIR
-# NetworkManager-wait-online returns as soon as the link is up - about two
-# seconds here - which on Wi-Fi is well before DNS resolves. The renderer
-# geocodes at startup and dies on the first URLError, so wait for a name to
-# actually resolve. Bounded, so a genuinely offline boot still gets going and
-# retries on its own.
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do getent hosts api.open-meteo.com >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
+# Wait for DNS, not just for a link. See upstream/wait-for-dns.sh.
+# A script rather than an inline sh -c: this heredoc is unquoted, so anything
+# with a $ in it would be expanded here at install time rather than at boot.
+ExecStartPre=$REPO/upstream/wait-for-dns.sh
 Environment=CHROME_BIN=/usr/bin/chromium
 Environment=SERVER_PORT=$PORT
 Environment=OSM_MAP_ZOOM=${OSM_MAP_ZOOM:-12}
