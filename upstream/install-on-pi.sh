@@ -85,19 +85,28 @@ mkdir -p "$RUNDIR"
 if [ ! -f "$RUNDIR/config.yaml" ]; then
     sed -e 's/^  port: .*/  port: '"$PORT"'/' \
         "$REPO/upstream/config.example.yaml" > "$RUNDIR/config.yaml"
-    # One page, not five, and regenerated through the day rather than once at
-    # midnight. Each page is a separate Chromium run; the patch above makes the
-    # pool list actually limit what gets rendered.
-    python3 - "$RUNDIR/config.yaml" <<'PY'
+    # All four pages the rotation uses, regenerated hourly. `current` is the one
+    # page nothing shows, and patch 0001 renders only what the pools name, so
+    # leaving it out saves a Chromium run per cycle.
+    python3 - "$RUNDIR/config.yaml" <<'CFG'
 import re, sys
 path = sys.argv[1]
 text = open(path).read()
-text = re.sub(r"  pools:\n(?:    .*\n)+", "  pools:\n    hourly: [hourly.png]\n", text)
-times = "\n".join(f'    "{h:02d}:00:00": hourly' for h in range(0, 24, 2))
+pools = ("  pools:\n    hourly: [hourly.png]\n    today: [today.png]\n"
+         "    daily: [daily.png]\n    tomorrow: [tomorrow.png]\n")
+text = re.sub(r"  pools:\n(?:    .*\n)+", pools, text)
+
+# Mirrors the panel server's page_schedule so the client protocol agrees with
+# what we actually show. Regeneration runs at each of these times.
+rotation = {0: "tomorrow", 6: "hourly", 10: "today", 17: "daily", 21: "tomorrow"}
+page, out = "tomorrow", []
+for hour in range(24):
+    page = rotation.get(hour, page)
+    out.append('    "%02d:00:00": %s' % (hour, page))
 text = re.sub(r"  schedule:\n(?:    .*\n)+",
-              "  schedule:\n    type: times\n" + times + "\n", text)
+              "  schedule:\n    type: times\n" + "\n".join(out) + "\n", text)
 open(path, "w").write(text)
-PY
+CFG
     echo "    wrote upstream/run/config.yaml - edit location and timezone"
 fi
 ln -sfn "$RUNDIR/config.yaml" "$APP/config.yaml"
