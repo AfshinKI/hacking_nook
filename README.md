@@ -17,21 +17,22 @@ No cloud, no subscription, no API keys.
 
 <table>
 <tr>
-<td width="45%" align="center">
-<img src="docs/images/nook.svg" width="150" alt="Nook Simple Touch"><br>
+<td width="50%" align="center">
+<img src="docs/images/nook-photo.jpg" width="300" alt="Nook Simple Touch e-reader"><br>
 <b>Nook Simple Touch</b><br>
 <sub>~$30 used · 6" e-ink, 800×600<br>Android 2.1 · weeks on a charge</sub>
 </td>
-<td width="55%" align="center">
-<img src="docs/images/pi-zero-2w.svg" width="230" alt="Raspberry Pi Zero 2 W"><br>
+<td width="50%" align="center">
+<img src="docs/images/pi-photo.jpg" width="300" alt="Raspberry Pi Zero 2 W board"><br>
 <b>Raspberry Pi Zero 2 W</b><br>
 <sub>512 MB RAM · draws the pages<br>Any Pi works; this is the tight case</sub>
 </td>
 </tr>
 </table>
 
-> The drawings above are placeholders. Photograph your own build and drop the
-> files in `docs/images/` — it deserves better than my line art.
+> Stock photographs, not this build. Photograph your own and replace
+> `docs/images/nook-photo.jpg` — a Nook actually on your wall beats a stock
+> shot. Credits at the bottom.
 
 ## The pages
 
@@ -54,6 +55,9 @@ to know *when*, and `hourly` is the page that says so.
 
 A gradual drift does not interrupt. Cloud thickening, or two degrees over six
 hours, is what the day view already shows.
+
+**`today` and `tomorrow` each carry a chance-of-precipitation chart** across the
+lower half — the next nine hours, and tomorrow's daytime.
 
 ## How it fits together
 
@@ -172,5 +176,7 @@ only pointers and our own code.
 | Map data in the sample images and at runtime | © OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright) |
 | `app/res/drawable-*/ic_launcher.png` — Android SDK template | Apache-2.0 |
 | Comic Neue — installed from Debian, not vendored | SIL OFL |
+| [`docs/images/nook-photo.jpg`](https://commons.wikimedia.org/wiki/File:Nook_Simple_Touch.jpg) — Tthaas | CC BY-SA 3.0 |
+| [`docs/images/pi-photo.jpg`](https://commons.wikimedia.org/wiki/File:Raspberry_Pi_Zero_2_W_--_2024_--_0008.jpg) — Anil Öztas | CC BY 4.0 |
 
 Rooting images and device backups are **not** in this repo, and must not be.
