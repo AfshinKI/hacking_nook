@@ -514,3 +514,35 @@ Two things that needed a second pass:
 Deployment note: `git apply` a patch that is already applied fails, which is
 correct but reads as an error in a loop over all patches. Check the tree for a
 marker string rather than trusting the exit code.
+
+## 2026-09-07 — Precipitation chart on tomorrow too; README photographs
+`hourly_forecasts` is "the next N hours from now", so on the tomorrow page —
+shown 21:00-06:00 — it would have charted the overnight, not tomorrow. Added a
+**`tomorrow_hourly`** dataset instead: 06:00-21:00 every two hours. It is
+**concrete and returns `[]` on the base `WeatherService`**, overridden for
+Open-Meteo, which already fetches a multi-day hourly array. Making it abstract
+would have broken every other provider the moment a page listed it in
+`requires`; this way they just yield no chart.
+The chart itself moved into `SimplifiedPage._precip_chart` so both pages share
+one implementation.
+
+README photographs: Wikimedia Commons, licences checked —
+[Nook Simple Touch](https://commons.wikimedia.org/wiki/File:Nook_Simple_Touch.jpg)
+by Tthaas (CC BY-SA 3.0) and
+[Raspberry Pi Zero 2 W](https://commons.wikimedia.org/wiki/File:Raspberry_Pi_Zero_2_W_--_2024_--_0008.jpg)
+by Anil Öztas (CC BY 4.0). Vendored with attribution rather than hotlinked;
+both licences permit it, and links rot.
+
+### Three mistakes, all mine, all worth remembering
+- **The overlay is patches *and* a file copy.** `google/api.py` is installed by
+  copying, not patching. Reverting the checkout so patches apply cleanly threw
+  it away silently, and the renderer came up running upstream's Google code and
+  died on `Invalid API key provided.` Now `upstream/refresh-on-pi.sh` does both
+  and greps the result to prove the shim landed.
+- **A helper that takes a `title` and then hardcodes the string.** The tomorrow
+  page read "Chance of precipitation" instead of naming the day. Extracted code
+  needs its parameters actually wired, not just accepted.
+- **Fetching the sample images before the HTTP server was up truncated all four
+  to zero bytes.** The `until` loop matched a stale log line. Fetch to a temp
+  file, decode it, and only then move it into place — the same rule the panel
+  server already follows for the pages it serves.
