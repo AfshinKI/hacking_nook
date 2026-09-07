@@ -65,6 +65,21 @@ submodule shows as dirty on the Pi. That is expected: upstream also writes its
 rendered PNGs into `server/views/` there. The Pi is a deployment target, not a
 place to edit from.
 
+### Starting at boot
+
+The installer enables the unit, so it comes up on its own. Two things matter on
+a Wi-Fi Pi and are handled in the unit:
+
+- **DNS lags the link.** `NetworkManager-wait-online` returns in about two
+  seconds, but the renderer geocodes at startup and dies on `Temporary failure
+  in name resolution`. An `ExecStartPre` waits (up to two minutes) for a name to
+  resolve, then starts regardless.
+- **`RestartSec=30`.** Long enough that a crash cannot spin, short enough that a
+  boot-time failure is not a multi-minute outage.
+
+The clock also matters: a Pi has no RTC, so the time is wrong until NTP syncs,
+and page selection is by time of day. `After=time-sync.target` orders around it.
+
 ### Do not restart it mid-regeneration
 
 A regeneration is several minutes of Chromium. `systemctl restart` on top of one

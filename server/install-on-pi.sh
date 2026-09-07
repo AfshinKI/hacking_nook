@@ -29,7 +29,7 @@ echo "==> writing $UNIT"
 sudo tee "$UNIT" >/dev/null <<UNITEOF
 [Unit]
 Description=NookPanel e-ink dashboard server
-After=network-online.target
+After=network-online.target NetworkManager-wait-online.service time-sync.target
 Wants=network-online.target
 # Start after the renderer when it is installed. Not a Wants= — this server
 # runs perfectly well on its own, drawing pages itself.

@@ -98,13 +98,19 @@ echo "==> systemd unit"
 sudo tee /etc/systemd/system/weather-cal.service >/dev/null <<UNIT
 [Unit]
 Description=inkplate10-weather-cal server (upstream, with OSM map shim)
-After=network-online.target
+After=network-online.target NetworkManager-wait-online.service time-sync.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=$USER
 WorkingDirectory=$RUNDIR
+# NetworkManager-wait-online returns as soon as the link is up - about two
+# seconds here - which on Wi-Fi is well before DNS resolves. The renderer
+# geocodes at startup and dies on the first URLError, so wait for a name to
+# actually resolve. Bounded, so a genuinely offline boot still gets going and
+# retries on its own.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do getent hosts api.open-meteo.com >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
 Environment=CHROME_BIN=/usr/bin/chromium
 Environment=SERVER_PORT=$PORT
 Environment=OSM_MAP_ZOOM=${OSM_MAP_ZOOM:-12}
@@ -116,7 +122,9 @@ Restart=always
 # two browsers competing and the webdriver connection times out at 120s - which
 # Selenium does not expose - so give a dying run time to take its children with
 # it, and leave a long gap before retrying.
-RestartSec=120
+# Long enough that a crash cannot spin, short enough that a boot-time failure
+# is not a five-minute outage.
+RestartSec=30
 TimeoutStopSec=90
 KillMode=control-group
 # Chromium is the memory hog; let it swap rather than be killed.

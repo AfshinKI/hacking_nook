@@ -84,8 +84,7 @@ Both services run **on the Pi**. Nothing else is involved once deployed.
 - **NookPanel**, the app, is ours — built for Android 2.1, which nothing modern
   can target.
 
-Everything restarts on boot. After a power cut the panel is back inside a
-minute, unattended.
+Everything restarts on boot — see [Auto-start](#auto-start) below.
 
 ## Set up the Pi
 
@@ -117,6 +116,64 @@ curl -o test.png http://localhost:8000/panel.png
 
 > Give the Pi a **DHCP reservation**. The Nook stores a literal URL, and typing
 > one on an infrared touchscreen is miserable.
+
+## Auto-start
+
+Both installers register systemd units and enable them, so nothing needs doing
+by hand. To confirm:
+
+```bash
+systemctl is-enabled weather-cal nookpanel     # both: enabled
+systemctl is-active  weather-cal nookpanel     # both: active
+```
+
+If either says `disabled`:
+
+```bash
+sudo systemctl enable --now weather-cal nookpanel
+```
+
+### What happens after a power cut
+
+| | |
+|---|---|
+| ~15 s | Pi boots, both units start |
+| ~20 s | Panel serves a page it draws itself — the renderer is not up yet |
+| ~3 min | Renderer finishes its four pages |
+| ~5 min | Panel picks them up on its next refresh |
+
+**The panel is never blank**, and no one has to touch anything. The first
+couple of minutes show a simpler locally-drawn page.
+
+### Wi-Fi is slower than systemd thinks
+
+`NetworkManager-wait-online` reports the network up as soon as the link
+associates — about two seconds on this Pi — which on Wi-Fi is well before DNS
+resolves. The renderer geocodes your location at startup, so it used to die on
+the first `Temporary failure in name resolution` and, with a long restart delay,
+leave the renderer down for minutes.
+
+The unit now waits for a name to actually resolve before starting:
+
+```ini
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do getent hosts api.open-meteo.com >/dev/null 2>&1 && exit 0; sleep 2; done; exit 0'
+```
+
+Bounded at two minutes, and it exits 0 either way, so a genuinely offline boot
+still starts and retries rather than blocking forever.
+
+### If it does not come back
+
+```bash
+systemctl status weather-cal nookpanel
+journalctl -u weather-cal -b --no-pager | head -40    # this boot, from the top
+systemd-analyze blame | head                          # what was slow
+```
+
+Do **not** `systemctl restart weather-cal` while it is mid-regeneration — two
+Chromiums compete and Selenium times out at 120 s. Check for
+`Starting http server` first, then `stop`, wait, `start`. Or just run
+`./upstream/refresh-on-pi.sh`, which sequences it properly.
 
 ## Set up the Nook
 
