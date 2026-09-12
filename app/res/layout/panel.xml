@@ -11,7 +11,7 @@
         android:scaleType="fitCenter"
         android:contentDescription="@string/app_name" />
 
-    <!-- Only visible before the first successful fetch, or on error. -->
+    <!-- Fetch errors are only visible if there is no previous image. -->
     <TextView
         android:id="@+id/panel_status"
         android:layout_width="fill_parent"
@@ -21,4 +21,11 @@
         android:textColor="#FF000000"
         android:textSize="18sp"
         android:text="@string/waiting" />
+    <com.hackingnook.panel.BatteryView
+        android:id="@+id/panel_battery"
+        android:layout_width="88dp"
+        android:layout_height="28dp"
+        android:layout_gravity="top|right"
+        android:layout_margin="6dp"
+        android:visibility="gone" />
 </FrameLayout>

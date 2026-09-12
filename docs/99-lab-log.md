@@ -643,3 +643,103 @@ reverses it.
 Also worth remembering: **USB Mass Storage mode pauses the app.** The foreground
 activity becomes `UMSServerActivity`, the panel stops fetching, and the e-ink
 holds its last frame — which looks exactly like a stale or wrong page.
+
+## 2026-09-12 — Keep the previous picture after a failed refresh
+Device: BNRV300, FW 1.2.2 (confirmed via adb getprop), previously rooted.
+Goal: stop failed image requests from replacing the dashboard with an error URL.
+Did: changed PanelActivity to retain the existing bitmap on fetch failure and
+continue normal scheduled retries. The error remains for an initial fetch with
+no previous image. Updated the app README and layout comment. Built with
+`cd app && make debug`; connected with `adb connect 192.168.4.78:5555`, installed
+with `adb install -r app/bin/NookPanel-debug.apk`, and launched with
+`adb shell am start -n com.hackingnook.panel/.PanelActivity`.
+Result: build and in-place installation succeeded; activity confirmed resumed.
+Broke / gotchas: adb emitted a temporary-file cleanup warning after reporting
+installation Success. The retained image lives only in the current activity,
+not across app restarts. A network failure was not deliberately induced on hardware.
+
+## 2026-09-12 — Open the panel menu with a long press
+Device: BNRV300, FW 1.2.2 (confirmed again via adb getprop).
+Goal: prevent ordinary taps from opening Refresh now / Settings.
+Did: replaced both picture and status click listeners with a shared long-click
+listener that consumes the gesture. Updated waiting/error hints and app README.
+Built with `cd app && make debug`, installed with
+`adb install -r app/bin/NookPanel-debug.apk`, and launched with
+`adb shell am start -n com.hackingnook.panel/.PanelActivity`.
+Result: build and installation succeeded, launch accepted. Physical touch
+behavior has not been manually verified.
+Broke / gotchas: the same adb temporary-file cleanup warning followed Success.
+
+## 2026-09-12 — Battery overlay on the loaded picture
+Device: BNRV300, FW 1.2.2 (adb getprop); battery service reported 99%.
+Goal: display the Nook battery level on the downloaded image.
+Did: added a monochrome BatteryView in the top-right corner with fill level,
+percentage, and a plus sign while charging. Subscribe to ACTION_BATTERY_CHANGED
+while resumed and unregister on pause; redraw only when the displayed state
+changes. The overlay is visible with a loaded or retained image and supports
+the existing long-press menu. Updated the app README.
+Validation: `cd app && make debug`, `git diff --check`,
+`adb shell dumpsys battery`, `adb install -r app/bin/NookPanel-debug.apk`,
+`adb shell am start -n com.hackingnook.panel/.PanelActivity`.
+Result: build and in-place installation succeeded; launch accepted. Visual
+placement and charging transitions have not been manually verified on the panel.
+Broke / gotchas: adb still reports its temporary-file cleanup warning after Success.
+
+## 2026-09-12 — Fix Settings crash after adding the battery resource
+Device: BNRV300, FW 1.2.2 (confirmed via adb getprop).
+Goal: restore Settings from the long-press menu.
+Found: `adb logcat -d -v time AndroidRuntime:E '*:S'` showed repeated
+NullPointerException crashes in SettingsActivity.onCreate at line 28. Adding
+panel_battery renumbered settings view IDs, but Ant reused SettingsActivity.class
+with old inlined IDs. The crash restarted the panel and looked like a refresh.
+Did: changed `make debug` to run `ant clean debug` so every class is recompiled
+against the generated resource IDs; documented the reason in app/README.md.
+Validation: clean build and `adb install -r app/bin/NookPanel-debug.apk` succeeded;
+`git diff --check` passed. Reopened PanelActivity with adb.
+Limit: direct adb launch of SettingsActivity was denied because it is not exported;
+opening it through the physical long-press menu remains to be verified.
+
+## 2026-09-12 — Start the dashboard past the boot slide lock
+Device: BNRV300, FW 1.2.2 (confirmed via adb getprop).
+Goal: boot directly into NookPanel without pressing a button or unlocking.
+Found: BootReceiver already launches the configured panel on BOOT_COMPLETED,
+but the panel only requested KEEP_SCREEN_ON. The upstream TRMNL DisplayActivity
+setKeepScreenAwake method also uses SHOW_WHEN_LOCKED, DISMISS_KEYGUARD and
+TURN_SCREEN_ON. Applied those same API-7-compatible window flags to NookPanel.
+Did: updated app README; `cd app && make debug`; installed using
+`adb install -r app/bin/NookPanel-debug.apk`; ran `adb reboot` and reconnected
+with `adb connect 192.168.4.78:5555`. No manual launch or input injected after boot.
+Result: `adb shell dumpsys window` confirmed mSystemBooted=true,
+mDisplayEnabled=true, PanelActivity focused, visible and drawn; Keyguard was
+GONE (mViewVisibility=0x8) with mPolicyVisibility=false. Automatic boot works
+according to the device window state. `git diff --check` passed.
+Broke / gotchas: the usual adb temporary APK cleanup warning followed Success.
+
+## 2026-09-12 — Innovetron boot, lock and power-off pictures
+Device: BNRV300, FW 1.2.2 (adb getprop).
+Goal: replace normal Nook branding with matching Innovetron artwork, including
+an explicit Nook is off screen.
+Did: inspected https://innovetron.com/ and its orbit/iN logo; created four
+matching monochrome circuit illustrations with the built-in imagegen tool.
+Saved source outputs, full prompts, converted device images and conversion
+script in assets/innovetron/. Backed up the original splash, loading frames,
+shutdown pictures, default/selected screensaver, settings DB and framework APK
+in backups/branding-2026-09-12/.
+Installed: boot partition booting.pgm (P5 800x600 rotated clockwise), loading
+render-0.png (512x256 RGBA), cold_boot_screen.png and autoshutdown_screen.png
+(600x800 RGB, Nook is off), fallback default.png and the selected JPEG in
+/media/screensavers/Extra/ (Resting). Low-battery/recovery/charging artwork and
+loading progress frames were preserved. Used staged files, host/device MD5
+comparison, temporary sibling files and cmp before rename. Restored /system
+read-only and unmounted the boot partition. Exact device script is saved with
+backups; implementation notes are in docs/08-custom-screens.md.
+Validation: conversion dimension/mode/decode assertions and git diff --check
+passed. All six installed file checksums matched the host files. Ran adb reboot,
+reconnected, and confirmed mSystemBooted=true, mDisplayEnabled=true, PanelActivity
+focused, and Keyguard hidden without sending an unlock or manual launch.
+Limit: early transient screens and actual power-off retention were not captured
+on the physical display. The device was left running NookPanel.
+Broke / gotchas: full-device streaming backup was too slow over Wi-Fi and stopped;
+.gz.partial/.bz2.partial are incomplete, not recovery images. Individual artwork
+backups completed. No firmware image or bootloader was flashed. ADB exec-out is
+unsupported; a tested raw shell with stty raw -echo preserves binary data.

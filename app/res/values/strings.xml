@@ -9,6 +9,6 @@
     <string name="settings">Settings</string>
     <string name="cancel">Cancel</string>
     <string name="menu_title">NookPanel</string>
-    <string name="waiting">No image yet.\n\nTap the screen and choose Settings to
+    <string name="waiting">No image yet.\n\nLong press the screen and choose Settings to
         point NookPanel at your server.</string>
 </resources>

@@ -21,7 +21,9 @@ image:
 	docker build -t $(IMAGE) tools
 
 debug: | $(HOMEDIR)
-	$(DOCKER) ant debug
+	# Resource IDs are inlined into Java classes. This old Ant build does not
+	# reliably recompile their callers when aapt renumbers IDs after XML edits.
+	$(DOCKER) ant clean debug
 
 # keytool will not create the directory itself.
 $(HOMEDIR):

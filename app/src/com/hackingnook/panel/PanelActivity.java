@@ -4,6 +4,10 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.os.Handler;
@@ -27,6 +31,17 @@ public class PanelActivity extends Activity {
 
     private ImageView image;
     private TextView status;
+    private BatteryView battery;
+    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        public void onReceive(Context context, Intent intent) {
+            int level = intent.getIntExtra("level", -1);
+            int scale = intent.getIntExtra("scale", -1);
+            int state = intent.getIntExtra("status", BatteryManager.BATTERY_STATUS_UNKNOWN);
+            int percent = level >= 0 && scale > 0
+                    ? (int) Math.min(100L, level * 100L / scale) : -1;
+            battery.setBattery(percent, state == BatteryManager.BATTERY_STATUS_CHARGING);
+        }
+    };
 
     private final Handler handler = new Handler();
     private Runnable tick;
@@ -40,20 +55,24 @@ public class PanelActivity extends Activity {
 
         image = (ImageView) findViewById(R.id.panel_image);
         status = (TextView) findViewById(R.id.panel_status);
+        battery = (BatteryView) findViewById(R.id.panel_battery);
 
-        // The whole point is a display that stays displayed.
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // BootReceiver starts us behind the Nook's keyguard. Bring the panel
+        // onto the screen and dismiss the slide lock without a button press.
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
 
-        image.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
+        View.OnLongClickListener menuListener = new View.OnLongClickListener() {
+            public boolean onLongClick(View v) {
                 showMenu();
+                return true;
             }
-        });
-        status.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                showMenu();
-            }
-        });
+        };
+        image.setOnLongClickListener(menuListener);
+        status.setOnLongClickListener(menuListener);
+        battery.setOnLongClickListener(menuListener);
 
         tick = new Runnable() {
             public void run() {
@@ -66,6 +85,7 @@ public class PanelActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         handler.removeCallbacks(tick);
 
         // Anything that steals focus — the Nook's own "USB Mode" dialog is the
@@ -84,6 +104,7 @@ public class PanelActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        unregisterReceiver(batteryReceiver);
         handler.removeCallbacks(tick);
     }
 
@@ -106,8 +127,17 @@ public class PanelActivity extends Activity {
                         fetching = false;
                         lastFetchAt = System.currentTimeMillis();
                         if (bitmap == null) {
-                            showStatus("Could not fetch\n" + url + "\n\nLast try: " + now()
-                                    + "\n\nTap for settings.");
+                            // A failed refresh must not replace the last good frame.
+                            // Keep retrying on the normal schedule; only show an
+                            // error when we have never displayed an image.
+                            if (image.getDrawable() != null) {
+                                status.setVisibility(View.GONE);
+                                image.setVisibility(View.VISIBLE);
+                                battery.setVisibility(View.VISIBLE);
+                            } else {
+                                showStatus("Could not fetch\n" + url + "\n\nLast try: " + now()
+                                        + "\n\nLong press for settings.");
+                            }
                         } else {
                             show(bitmap);
                         }
@@ -118,6 +148,7 @@ public class PanelActivity extends Activity {
     }
 
     private void show(Bitmap bitmap) {
+        battery.setVisibility(View.VISIBLE);
         status.setVisibility(View.GONE);
         image.setVisibility(View.VISIBLE);
 
@@ -133,6 +164,7 @@ public class PanelActivity extends Activity {
     }
 
     private void showStatus(String text) {
+        battery.setVisibility(View.GONE);
         image.setVisibility(View.GONE);
         status.setVisibility(View.VISIBLE);
         status.setText(text);
