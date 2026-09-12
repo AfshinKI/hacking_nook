@@ -819,3 +819,32 @@ Result: no substitute image on failure. Hourly Nook wake schedule is unchanged.
 Recovery: weather-cal finished all four pages at 15:23:15 (Pi local time), resumed
 HTTP on port 8082, and nookpanel automatically fetched today.png at 15:23:45.
 Both services were active; no manual refresh was needed.
+
+## 2026-09-12 — Adaptive bottom charts for Today and Tomorrow
+Device: existing BNRV300 FW 1.2.2; Nook untouched. Renderer: nultra, 192.168.4.43.
+Goal: show useful weather information instead of a dry precipitation chart.
+Did: committed/pushed the preceding image-retry work first (20431f4). Added local
+smart_chart.py and upstream patch 0004. Today prioritizes precipitation in the next
+five hours; Tomorrow evaluates every hour from 06:00 through 21:00 tomorrow.
+Otherwise choose strong wind/cloudy wind, UV, lighter wind, then temperature.
+Rain retains the hatched probability bars; the heading explains the chosen metric.
+Tomorrow shows labelled two-hour peaks, preserving showers between old chart labels.
+Added UV, clouds, gusts and precipitation amount to the existing Open-Meteo request.
+Old caches without the new fields refresh automatically; tomorrow_hourly is now
+invalidated with other forecast data. Hourly/daily layouts and Nook alarms unchanged.
+Validation: 19 local unittest cases passed, including rain window boundaries,
+cloud/wind/UV priorities, night, mph, missing values, between-label spikes and the
+previous image recovery cases. Isolated Pi integration tests passed for request
+fields/cache reuse/migration, hourly mapping, tomorrow invalidation and all four
+real templates. Chromium previews for UV, precipitation, wind and negative
+temperature fit 600x800; visually inspected. Native and Docker-style patch application
+checks, Python compilation, shell syntax and git diff whitespace checks passed.
+Deployment: backed up touched renderer files to /tmp/nook-before-smart-charts,
+applied only patch 0004 and installed the helper on nultra. The panel proxy kept
+serving its byte-identical saved image during renderer startup. First live Today
+render selected UV (peak 1.9), confirming the new API fields reached the template.
+Result: the final helper (including cloudy/windy priority) completed all four
+renders at 15:44:25 Pi local time. Today and Tomorrow both selected UV from the
+live forecast (peaks 1.9 and 4.8). Inspected both live 600x800 images. HTTP 8082
+resumed, and the proxy automatically served the new Today PNG at 15:44:49. Both
+services active; the next scheduled generation remains 15:58 for the 16:00 wake.

@@ -1,0 +1,158 @@
+Choose useful Today/Tomorrow charts, retaining hourly data for every tomorrow hour.
+
+--- a/server/weather/openmeteo/openmeteo.py
++++ b/server/weather/openmeteo/openmeteo.py
+@@ -29,7 +29,7 @@
+             raise ValueError("OpenMeteoService requires a location (e.g. 'Dublin')")
+         self.lat, self.lon = self._get_coords(location)
+ 
+-    _FORECAST_KEYS = ("forecast", "current_conditions", "daily_summary", "hourly_forecast", "5day_forecast")
++    _FORECAST_KEYS = ("forecast", "current_conditions", "daily_summary", "hourly_forecast", "tomorrow_hourly", "5day_forecast")
+ 
+     def invalidate_forecast_cache(self) -> None:
+         self.cache.delete(*self._FORECAST_KEYS)
+@@ -84,7 +84,8 @@
+     def _fetch_forecast(self) -> dict:
+         """Fetch current + hourly + daily in a single API call, cached ~55 min."""
+         cached = self.cache.get("forecast")
+-        if cached is not None:
++        if cached is not None and all(key in cached.get("hourly", {}) for key in
++                                      ("uv_index", "cloud_cover", "wind_gusts_10m", "precipitation")):
+             return cached
+ 
+         res = requests.get(
+@@ -100,6 +101,7 @@
+                     "temperature_2m", "apparent_temperature", "relative_humidity_2m",
+                     "wind_speed_10m", "wind_direction_10m",
+                     "precipitation_probability", "weather_code", "is_day",
++                    "uv_index", "cloud_cover", "wind_gusts_10m", "precipitation",
+                 ]),
+                 "daily": ",".join([
+                     "temperature_2m_max", "temperature_2m_min", "apparent_temperature_max",
+@@ -109,6 +111,7 @@
+                 ]),
+                 "temperature_unit": self._temp_unit_param,
+                 "wind_speed_unit": self._wind_unit_param,
++                "precipitation_unit": "mm",
+                 "forecast_days": 7,
+                 "timezone": "auto",
+             },
+@@ -179,9 +182,31 @@
+         self.cache.set("daily_summary", result)
+         return result
+ 
++    def _chart_fields(self, hourly, i):
++        """Optional hourly metrics; missing values stay unknown, not zero."""
++        def value(key, digits=1):
++            values = hourly.get(key) or []
++            raw = values[i] if i < len(values) else None
++            return (round(raw) if digits == 0 else round(raw, digits)) if raw is not None else None
++
++        return {
++            "uv_index": value("uv_index"),
++            "cloud_cover": value("cloud_cover", 0),
++            "is_day": value("is_day", 0),
++            "weather_code": value("weather_code", 0),
++            "precipitation_mm": value("precipitation", 2),
++            "rain_probability": value("precipitation_probability", 0),
++            "wind": {
++                "unit": self._speed_unit,
++                "value": value("wind_speed_10m"),
++                "gust": value("wind_gusts_10m"),
++                "direction_degrees": value("wind_direction_10m", 0),
++            },
++        }
++
+     def get_hourly_forecast(self) -> list:
+         cached = self.cache.get("hourly_forecast")
+-        if cached is not None:
++        if cached is not None and all("uv_index" in f for f in cached):
+             return cached
+ 
+         data = self._fetch_forecast()
+@@ -209,16 +234,16 @@
+                     "direction_degrees": round(hourly["wind_direction_10m"][i]),
+                 },
+                 "humidity": round(hourly["relative_humidity_2m"][i]),
+-                "rain_probability": round(hourly["precipitation_probability"][i] or 0),
++                **self._chart_fields(hourly, i),
+             })
+ 
+         self.cache.set("hourly_forecast", results)
+         return results
+ 
+-    def get_tomorrow_hourly(self, start_hour=6, end_hour=21, step=2) -> list:
++    def get_tomorrow_hourly(self, start_hour=6, end_hour=21, step=1) -> list:
+         """Tomorrow between `start_hour` and `end_hour`, every `step` hours."""
+         cached = self.cache.get("tomorrow_hourly")
+-        if cached is not None:
++        if cached is not None and all("uv_index" in f for f in cached):
+             return cached
+ 
+         data = self._fetch_forecast()
+@@ -244,7 +269,7 @@
+                     "unit": self._temp_unit,
+                     "value": round(hourly["temperature_2m"][i]),
+                 },
+-                "rain_probability": round(hourly["precipitation_probability"][i] or 0),
++                **self._chart_fields(hourly, i),
+             })
+ 
+         self.cache.set("tomorrow_hourly", results)
+--- a/server/views/today.py
++++ b/server/views/today.py
+@@ -1,5 +1,6 @@
+ import datetime as dt
+ from .simplified import SimplifiedPage
++from smart_chart import choose_chart, draw_chart
+ 
+ 
+ class TodayPage(SimplifiedPage):
+@@ -30,8 +31,7 @@
+         a.link(rel="stylesheet", href="today-precip.css")
+ 
+     def _extra_body(self, a, **kwargs):
+-        self._precip_chart(a, kwargs.get("hourly_forecasts"),
+-                           "Chance of precipitation")
++        draw_chart(a, choose_chart(kwargs.get("hourly_forecasts"), tomorrow=False))
+ 
+     def template(self, **kwargs):
+         ds = kwargs["daily_summary"]
+--- a/server/views/tomorrow.py
++++ b/server/views/tomorrow.py
+@@ -3,6 +3,7 @@
+ from epd_server.page import SkipPage
+ 
+ from .simplified import SimplifiedPage
++from smart_chart import choose_chart, draw_chart
+ 
+ 
+ class TomorrowPage(SimplifiedPage):
+@@ -44,8 +45,7 @@
+                          tomorrow_hourly=kwargs.get("tomorrow_hourly"))
+ 
+     def _extra_body(self, a, **kwargs):
+-        self._precip_chart(a, kwargs.get("tomorrow_hourly"),
+-                           "Chance of precipitation tomorrow")
++        draw_chart(a, choose_chart(kwargs.get("tomorrow_hourly"), tomorrow=True))
+ 
+     def _css_links(self, a):
+         super()._css_links(a)
+--- a/server/views/html/today-precip.css
++++ b/server/views/html/today-precip.css
+@@ -1,4 +1,4 @@
+-/* Chance-of-precipitation chart on the today page. */
++/* Adaptive forecast chart, only Today and Tomorrow. */
+ #day-precip {
+   margin-top: calc(var(--inner-vh) * 1.5);
+   padding: 0 calc(var(--inner-vw) * 6);
+@@ -28,3 +28,9 @@
+ .day-precip-value { font-size: 30px; }
+ .day-precip-scale { font-size: 24px; opacity: 0.5; text-anchor: start; }
+ .day-precip-hour  { font-size: 28px; opacity: 0.7; }
++
++.day-chart-reason {
++  font-size: calc(var(--inner-vw) * 2.3);
++  margin: 0 0 calc(var(--inner-vh) * 0.5);
++  opacity: 0.7;
++}

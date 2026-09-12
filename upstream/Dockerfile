@@ -17,6 +17,11 @@ COPY upstream/google_api_shim.py /app/google/api.py
 RUN chown -R app:app /app/google /app/nook_mapview.py /app/linemap.py /app/fonts.py
 
 COPY upstream/retrying_server.py /app/retrying_server.py
-RUN sed -i "s/from epd_server import DisplayServer, align_process_timezone/from epd_server import align_process_timezone\nfrom retrying_server import DisplayServer/" /app/server.py
+COPY upstream/smart_chart.py /app/smart_chart.py
+COPY upstream/patches/ /tmp/nook-patches/
+# Apply the same overlays as the native Pi install (strip the server/ prefix).
+RUN for patch in /tmp/nook-patches/*.patch; do git apply -p2 "$patch" || exit 1; done \
+    && chown -R app:app /app/views /app/server.py /app/weather \
+    && rm -rf /tmp/nook-patches
 
 USER app

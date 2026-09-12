@@ -222,3 +222,48 @@ the Docker image install the adapter. The panel proxy retains its disk-cached la
 good image while the renderer recovers.
 
 Run failure-path tests with `python3 -m unittest discover -s tests` from the repo root.
+
+## Adaptive Today and Tomorrow charts
+
+Only the bottom chart in Today/Tomorrow changes. The hourly and daily pages keep
+their layouts. Selection happens on each scheduled render, with no new Nook wakeups.
+
+Priority (defaults chosen for this dashboard, not weather alerts):
+
+1. **Precipitation** when any relevant hour has at least 40% probability, at least
+   0.1 mm forecast precipitation, or a precipitation weather code (including snow
+   and thunderstorms). Today checks from now through the next five hours; Tomorrow
+   checks all of tomorrow's 06:00–21:00 hours. The chart retains the hatched chance bars.
+2. **Wind** for sustained wind at least 30 km/h or gusts at least 45 km/h,
+   or a cloudy hour (at least 60% cloud cover) with wind at least 20 km/h or
+   gusts at least 35 km/h.
+3. **UV** when the forecast peak is at least 3.
+4. **Wind** for sustained wind at least 20 km/h or gusts at least 35 km/h.
+5. **UV** on sunny days (a daylight hour at most 40% cloud cover) with nonzero UV.
+6. **Temperature** for otherwise quiet weather, including cloudy calm days and nights.
+
+Wind thresholds use km/h internally and the chart respects configured display
+units. UV is suppressed at night. Unknown values appear as gaps, never invented
+zeroes. The heading identifies the selected metric and gives a short explanation
+(e.g. when precipitation is possible, UV peak, or maximum gusts).
+
+Tomorrow fetches every hour before selection, then draws eight two-hour peak
+buckets to fit the screen, including spikes between labels. Its chart is explicitly
+labelled `2h peaks`. Today retains the existing upcoming forecast window.
+`tomorrow_hourly` is invalidated with the other datasets on regeneration.
+
+The added fields (`uv_index`, `cloud_cover`, `wind_gusts_10m`, `precipitation`) come
+from the same [Open-Meteo forecast API](https://open-meteo.com/en/docs) request.
+`smart_chart.py` is the local selection/rendering helper; patch `0004` wires it into
+Today/Tomorrow and the provider. Native install/update and Docker apply the overlays.
+
+Validation: `python3 -m unittest discover -s tests` tests selection and image recovery.
+For provider/template integration, apply all patches to an isolated upstream copy,
+copy `smart_chart.py` beside its `server.py`, then run with the weather-cal venv:
+
+```bash
+python tests/check_smart_renderer.py --server /tmp/patched-weather-cal/server \
+    --previews /tmp/chart-previews
+```
+
+The optional preview step uses Chromium and checks the chart fits the 600×800 page.
