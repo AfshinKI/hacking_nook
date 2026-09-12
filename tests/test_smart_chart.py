@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'upstream'))
-from smart_chart import choose_chart
+from smart_chart import choose_chart, smooth_paths
 
 NOW = datetime(2026, 9, 12, 10, 30)
 
@@ -121,6 +121,30 @@ class SmartChart(unittest.TestCase):
         data[0]['dt'] = NOW - timedelta(hours=1)
         data[0]['rain_probability'] = 100
         self.assertEqual(self.choose(data).kind, 'temperature')
+
+
+class SmoothCurves(unittest.TestCase):
+    def test_gaps_are_not_connected_and_single_points_stay_isolated(self):
+        paths = smooth_paths([(0, 0), (10, 5), None, (30, 1), None, (50, 2), (60, 0)])
+        self.assertEqual(len(paths), 2)
+        self.assertTrue(paths[0].startswith('M 0.0 0.0'))
+        self.assertTrue(paths[1].startswith('M 50.0 2.0'))
+        self.assertEqual(smooth_paths([None, (0, 1), None]), [])
+
+    def test_uv_and_negative_temperature_curves_cannot_overshoot(self):
+        for values in ([0, 1, 5, 0, 0], [-15, -9, -11, -2, -2]):
+            path, = smooth_paths([(i * 30, v) for i, v in enumerate(values)])
+            segments = path.split(' C ')[1:]
+            self.assertEqual(len(segments), len(values) - 1)
+            for i, segment in enumerate(segments):
+                coords = [float(v) for v in segment.split()]
+                low, high = sorted(values[i:i+2])
+                # A Bezier stays within its control-point hull. Keeping both
+                # controls inside the endpoint range prevents false peaks/dips.
+                for y in (coords[1], coords[3], coords[5]):
+                    self.assertLessEqual(low, y)
+                    self.assertLessEqual(y, high)
+
 
 
 if __name__ == '__main__':

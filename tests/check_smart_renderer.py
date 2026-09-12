@@ -88,6 +88,10 @@ def main():
         html = str(page.airium)
         assert f'data-metric="{kind}"' in html, name
         assert '<svg' in html and 'nan' not in html and 'None' not in html
+        if kind in ('uv', 'temperature'):
+            assert 'day-chart-curve' in html and ' C ' in html and '<rect' not in html
+        else:
+            assert '<rect' in html and 'day-chart-curve' not in html
         path = Path(args.server) / 'views/html' / (name + '.html')
         path.write_text(html)
         generated.append((name, path))

@@ -267,3 +267,8 @@ python tests/check_smart_renderer.py --server /tmp/patched-weather-cal/server \
 ```
 
 The optional preview step uses Chromium and checks the chart fits the 600×800 page.
+
+UV and temperature use smooth, shape-preserving cubic lines with value markers.
+The curves pass through the forecast values without inventing higher peaks or
+negative UV, and break across missing data. Precipitation (rain/snow) and wind
+retain hatched bars.

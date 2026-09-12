@@ -848,3 +848,18 @@ renders at 15:44:25 Pi local time. Today and Tomorrow both selected UV from the
 live forecast (peaks 1.9 and 4.8). Inspected both live 600x800 images. HTTP 8082
 resumed, and the proxy automatically served the new Today PNG at 15:44:49. Both
 services active; the next scheduled generation remains 15:58 for the 16:00 wake.
+
+## 2026-09-12 — Smooth UV and temperature lines
+Device: existing BNRV300 FW 1.2.2; Nook untouched. Server: nultra.
+Goal: retain precipitation bars and use spline-like curves for UV and temperature.
+Did: added shape-preserving cubic SVG paths for UV/temperature, retaining point
+markers and labels. Curves break at missing values and do not overshoot adjacent
+values. Precipitation (including rain/snow) and wind retain hatched bars.
+Validation: all 21 unit tests passed, including gaps and bounded UV and
+negative temperature curves. Real template checks confirmed curved paths for UV and
+temperature, bars for precipitation/wind. Four Chromium previews fit 600x800.
+Deployment/result: backed up the helper to /tmp/nook-before-smooth-chart.py and
+installed the verified helper on nultra. Visually inspected the regenerated live
+Today UV curve. The full cycle finished at 15:53:37; Tomorrow selected wind from
+the updated forecast (gusts 35 km/h), retaining its bars as intended. The renderer
+resumed HTTP service and kept the existing 16:00 client-wake schedule.

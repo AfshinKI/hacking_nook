@@ -133,6 +133,34 @@ def choose_chart(forecasts, tomorrow=False, now=None):
     return Chart(kind, title, reason, unit, hours, values)
 
 
+def smooth_paths(points):
+    """Shape-preserving cubic curves; gaps break the line, peaks never overshoot."""
+    runs = [[]]
+    for point in points:
+        if point is None:
+            if runs[-1]:
+                runs.append([])
+        else:
+            runs[-1].append(point)
+    paths = []
+    for run in runs:
+        if len(run) < 2:
+            continue  # isolated values still get a point marker
+        slopes = [(b[1] - a[1]) / (b[0] - a[0]) for a, b in zip(run, run[1:])]
+        tangents = [slopes[0]]
+        for before, after in zip(slopes, slopes[1:]):
+            tangents.append(0 if before * after <= 0 else 2 * before * after / (before + after))
+        tangents.append(slopes[-1])
+        path = [f'M {run[0][0]:.1f} {run[0][1]:.1f}']
+        for i, (a, b) in enumerate(zip(run, run[1:])):
+            third = (b[0] - a[0]) / 3
+            path.append(f'C {a[0]+third:.1f} {a[1]+third*tangents[i]:.1f} '
+                        f'{b[0]-third:.1f} {b[1]-third*tangents[i+1]:.1f} '
+                        f'{b[0]:.1f} {b[1]:.1f}')
+        paths.append(' '.join(path))
+    return paths
+
+
 def draw_chart(a, chart):
     if chart is None:
         return
@@ -166,19 +194,21 @@ def draw_chart(a, chart):
             a.text(x=str(left), y='24', klass='day-precip-scale', _t=label(upper))
             if chart.kind == 'temperature':
                 a.text(x=str(left - 20), y=str(bottom), klass='day-precip-scale', _t=label(lower))
-            previous = None
+            is_curve = chart.kind in ('temperature', 'uv')
+            if is_curve:
+                points = [(left + slot * (i + 0.5), y(value)) if value is not None else None
+                          for i, value in enumerate(chart.values)]
+                for path in smooth_paths(points):
+                    a.path(d=path, fill='none', stroke='#000', klass='day-chart-curve',
+                           **{'stroke-width': '4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'})
             for i, (forecast, value) in enumerate(zip(chart.hours, chart.values)):
                 x = left + slot * (i + 0.5)
                 if value is None:
                     a.text(x=f'{x:.1f}', y=str(bottom - 8), klass='day-precip-value', _t='–')
-                    previous = None
-                elif chart.kind == 'temperature':
+                elif is_curve:
                     point = (x, y(value))
-                    if previous:
-                        a.line(x1=f'{previous[0]:.1f}', y1=f'{previous[1]:.1f}', x2=f'{x:.1f}', y2=f'{point[1]:.1f}', stroke='#000', **{'stroke-width': '4'})
                     a.circle(cx=f'{x:.1f}', cy=f'{point[1]:.1f}', r='5', fill='#000')
                     a.text(x=f'{x:.1f}', y=f'{point[1]-10:.1f}', klass='day-precip-value', _t=label(value))
-                    previous = point
                 else:
                     if value > 0:
                         a.rect(x=f'{x - bar_w/2:.1f}', y=f'{y(value):.1f}', width=f'{bar_w:.1f}', height=f'{bottom-y(value):.1f}', fill='url(#hatch)', stroke='#000', **{'stroke-width': '3'})
