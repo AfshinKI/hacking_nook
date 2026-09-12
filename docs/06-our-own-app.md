@@ -1,7 +1,7 @@
 # 06 — NookPanel: our own Android 2.1 app
 
-Lives in [`app/`](../app). Status: **v0.1 builds and produces a 45 KB APK
-reporting `sdkVersion:'7'`. Not yet installed on hardware.**
+Lives in [`app/`](../app). Status: **installed on BNRV300 firmware 1.2.2, with
+hourly screensaver sleep, automatic wake, and an API-7-compatible APK.**
 
 ## The build problem, and the solution
 
@@ -30,20 +30,21 @@ Notes that cost time to discover:
 - Files in the bundle unpack root-only; the Dockerfile `chmod -R a+rX`s them so
   the container can run as your UID and not leave root-owned build output.
 
-## What v0.1 does
+## App components
 
 | | |
 |---|---|
-| `PanelActivity` | Fullscreen, `FLAG_KEEP_SCREEN_ON`, fetches the configured URL on a timer, draws it `fitCenter`. Tap anywhere → Refresh / Settings dialog |
+| `PanelActivity` | Fullscreen image with battery overlay; long press → Refresh / Settings. Fetches, saves the screensaver, then sleeps |
 | `SettingsActivity` | Two fields: image URL and refresh interval. Not a `PreferenceActivity` — typing on an infrared touchscreen is bad enough already |
 | `ImageFetcher` | Plain HTTP only. Decodes to `RGB_565` with `inPurgeable`, and catches `Throwable` because `OutOfMemoryError` is a genuine expectation at 256 MB |
 | `Config` | One place for SharedPreferences keys, with a 10 s floor on the interval |
+| `RefreshReceiver` / `PowerCycle` | Persistent RTC wake alarm, bounded wake lock, Wi-Fi control and screen-timeout restoration |
+| `FrameStore` | Last-good-image cache and atomic dashboard screensaver writes |
 
 Java 6 language level throughout: no diamond operator, no try-with-resources,
 no strings in `switch`.
 
-Deliberate omissions in v0.1: HTTPS, deep sleep, offline caching, e-ink refresh
-control.
+Remaining omissions: HTTPS and explicit e-ink refresh control.
 
 ## Known Android-2.1 landmines (already handled or noted)
 
@@ -79,10 +80,37 @@ intent filter and it becomes the home screen. Recoverable via adb and ReLaunch,
 but do it only once deep sleep works — otherwise a crash loop leaves you poking
 at it over Wi-Fi.
 
-## v0.2 — deep sleep (the feature that matters)
+## v0.2 — deep sleep
 
-Awake, the Nook lasts about **60 hours**. With deep sleep and a 30-minute
-refresh, **30+ days**. The mechanism, learned from
+Implemented in NookPanel on 2026-09-12, with a **one-hour default refresh**:
+
+- Save the last successful download in app-private storage and reload it after
+  process restarts. Failed fetches preserve that image.
+- Render the dashboard, including the battery overlay, to
+  `/media/screensavers/NookPanel/panel.png`, select it as the system screensaver,
+  and hide the screensaver banner. The Innovetron boot and off screens remain.
+- Use an explicit manifest `RefreshReceiver` and `AlarmManager.RTC_WAKEUP`, so
+  the next cycle survives process eviction. Schedule a fallback before fetching
+  and rearm at completion. The interval remains editable in Settings.
+- Allow 25 seconds for Wi-Fi to associate; a 75-second watchdog bounds the whole
+  attempt. A timed-out completion cannot replace the currently displayed image.
+- Automatic cycles sleep after five seconds; manual wake enables Wi-Fi and
+  leaves 60 seconds of idle time for the long-press menu. Menus and Settings
+  stay awake while open. No side-button remapping is used.
+- Turn Wi-Fi off, release the bounded refresh wake lock, clear the awake window
+  flags, and set the system timeout to one second. Restore the original timeout
+  on SCREEN_OFF, with a persisted recovery flag for the next app launch.
+
+The battery icon and clock are snapshots between wakes. ADB over Wi-Fi is
+unavailable while sleeping. If `/media` is unmounted (USB mass-storage mode), a
+screensaver write can fail; the prior screensaver stays intact and the app still
+returns to sleep. Original screensaver settings are saved in app preferences.
+
+### Why the natural screen-off path matters
+
+The upstream TRMNL project reports about **60 hours** awake and **30+ days** with
+deep sleep at a 30-minute refresh. Those are upstream results, not a measured
+runtime for our Nook's aged battery. The mechanism, learned from
 `external/trmnl-nook-simple-touch/AGENTS.md`, is worth reading in full because
 almost every obvious approach fails:
 
@@ -95,15 +123,13 @@ almost every obvious approach fails:
 | `service call power 2 ...` via `su` | Correct binder call, works from adb — but the Superuser prompt *is itself user activity*, which resets the idle timer and invalidates the timestamp |
 | **`Settings.System.SCREEN_OFF_TIMEOUT` = 1000 ms** | ✅ **Works.** `WRITE_SETTINGS` is a normal permission. Android's own `PowerManagerService` then runs the natural screen-off path, which renders the EPD screensaver, calls `set_screen_state 0`, and sets up the keyguard properly |
 
-So v0.2 is: write the fetched image where the Nook screensaver reads it → drop
-`SCREEN_OFF_TIMEOUT` to ~1 s → set an `AlarmManager` RTC wakeup for the next
-refresh → turn Wi-Fi off. Add `WRITE_SETTINGS` and `WRITE_EXTERNAL_STORAGE` to
-the manifest when we do.
+The manifest now includes `WRITE_SETTINGS`, `WRITE_EXTERNAL_STORAGE`,
+`CHANGE_WIFI_STATE`, and `WAKE_LOCK` for this flow.
 
 ## Roadmap
 
-- **v0.1** ✅ fetch and display, settings, tap menu, start on boot
-- **v0.2** deep sleep, battery/RSSI reporting back to the server
-- **v0.3** offline cache + a real error screen; explicit e-ink full-refresh
+- **v0.1** ✅ fetch and display, settings, long-press menu, start on boot
+- **v0.2** ✅ deep sleep, hourly wake, last-good-image cache, battery overlay
+- **v0.3** battery/RSSI reporting back to the server; explicit e-ink full-refresh
   control (`/sys/class/graphics/fb0/epd_*`, `android.hardware.EpdController`)
 - **v0.4** touch zones: tap left/right to page between server-rendered screens

@@ -14,7 +14,7 @@ public final class Config {
     public static final String KEY_INTERVAL = "interval_seconds";
 
     /** Long enough that a full e-ink refresh is not constantly flashing. */
-    public static final int DEFAULT_INTERVAL_SECONDS = 300;
+    public static final int DEFAULT_INTERVAL_SECONDS = 3600;
 
     private Config() {
     }

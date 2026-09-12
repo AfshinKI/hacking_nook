@@ -743,3 +743,57 @@ Broke / gotchas: full-device streaming backup was too slow over Wi-Fi and stoppe
 .gz.partial/.bz2.partial are incomplete, not recovery images. Individual artwork
 backups completed. No firmware image or bootloader was flashed. ADB exec-out is
 unsupported; a tested raw shell with stty raw -echo preserves binary data.
+
+## 2026-09-12 — Battery-saving assessment (read-only device checks)
+Device: BNRV300, FW 1.2.2 confirmed via getprop; battery 96%, unplugged.
+Goal: assess disabling touch, physical-button controls and maximum battery life.
+Did: inspected dumpsys power/battery, /proc/bus/input/devices, keypad keylayouts
+and zForce input sysfs. Power service reports an active KEEP_SCREEN_ON_FLAG
+screen wake lock and no partial wake locks. This matches PanelActivity's current
+always-awake design. The keypad has distinct LEFT/RIGHT_NEXT/PREVPAGE mappings;
+Home is handled by gpio-keys with WAKE_DROPPED. Side-button wake from suspend
+has not been physically tested. No touch-controller power switch was identified
+in the input2 directory; ignoring touches in the app is not hardware power-down.
+Recommendation: implement image-as-screensaver plus RTC wake, bounded Wi-Fi
+fetches and sleep between updates first; add side-button app controls and test
+physical wake, keeping Home/power available for waking and recovery. The dashboard
+must remain the sleep image rather than displaying the branded Resting artwork
+on every cycle. Upstream TRMNL README reports 30+ days at 30-minute updates;
+that is an upstream result, not a measurement or promise for this aged battery.
+Result: no app, input, or power settings changed during this assessment.
+
+## 2026-09-12 — Hourly dashboard screensaver and deep sleep
+Device: BNRV300, FW 1.2.2; initial battery 96%, unplugged.
+Goal: keep the dashboard visible while asleep, refresh hourly, use manual wake
+and the existing long-press menu instead of remapping side buttons.
+Did: replaced Handler-only periodic refresh with a manifest RefreshReceiver and
+RTC_WAKEUP alarm, scheduling a fallback before each attempt. Added a bounded
+90-second refresh wake lock, a 25-second Wi-Fi connection wait and a 75-second
+attempt watchdog. Wi-Fi is disabled between updates. The current panel including
+its battery overlay is atomically written to /media/screensavers/NookPanel/panel.png,
+selected as screensaver, and the banner hidden. Previous screensaver settings
+are saved in app preferences. Last successful downloads are also saved internally
+and loaded on app restart. The old image survives failed fetches. Sleep uses the
+one-second system timeout, restored on SCREEN_OFF and recovered on next launch.
+Automatic refresh sleeps after five seconds; manual wake gives 60 seconds of
+idle time. Long-press menu and Settings remain usable and stay awake while open.
+Settings restores Wi-Fi; side-button mappings and touch configuration are unchanged.
+Validation:
+- Clean API-7-compatible Docker build passed; installed the APK in place.
+- Temporarily used a 90-second interval. Logs showed sleep at 13:49:06, screen off
+  at 13:49:13, automatic alarm at 13:49:33, successful fetch at 13:49:39 and a
+  return to sleep at 13:49:45. Another alarm/fetch followed at 13:51:08/13:51:14.
+- dmesg confirmed actual kernel mem suspend and resume, with Wi-Fi driver
+  reinitialization afterward. This was not merely an invisible activity.
+- Reinstalled to restart the process, then tested http://127.0.0.1:9/unavailable.png.
+  Connection refused; the cached image was byte-identical before and after.
+  Another alarm retried the failed URL and returned to sleep. Saved screensaver
+  was inspected: dashboard with battery icon, no error screen or sleep branding.
+- Restored the original URL and set interval_seconds=3600. Final real fetch
+  succeeded at 13:55:32; saved next_refresh_at minus last_attempt_at was exactly
+  3,600,000 ms, matching dumpsys alarm's RTC_WAKEUP entry.
+- git diff --check passed. Logs, original/final preferences and retained
+  screensaver are in gitignored backups/sleep-test-2026-09-12/.
+Gotchas: the automatic online window is brief, so early ADB reconnect attempts
+missed it; later logs confirmed both alarms had fired correctly. Tests used short
+intervals; we did not wait a full hour or measure multi-day battery runtime.

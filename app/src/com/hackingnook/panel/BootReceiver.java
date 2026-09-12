@@ -27,6 +27,7 @@ public class BootReceiver extends BroadcastReceiver {
         }
         Intent panel = new Intent(context, PanelActivity.class);
         panel.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        panel.putExtra(PowerCycle.AUTOMATIC, true);
         context.startActivity(panel);
     }
 }

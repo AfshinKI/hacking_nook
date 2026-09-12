@@ -2,165 +2,292 @@ package com.hackingnook.panel;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.DialogInterface;
-import android.content.Intent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.IntentFilter;
-import android.os.BatteryManager;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
+import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.text.format.DateFormat;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.TextView;
-
 import java.util.Date;
 
-/**
- * Fullscreen image panel. Wakes, fetches an image from the configured URL,
- * draws it, then waits for the next interval.
- *
- * v0.1 keeps the screen on the whole time (~60 h of battery). Deep sleep —
- * writing the image as the Nook screensaver and setting an RTC alarm, which is
- * what gets you 30+ days — comes next; see docs/06-our-own-app.md.
- */
+/** Fetch, preserve the dashboard as a screensaver, and sleep until an RTC alarm. */
 public class PanelActivity extends Activity {
-
+    private static final int AWAKE_FLAGS = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON;
+    private static final long MANUAL_IDLE_MS = 60000L;
+    private final Handler handler = new Handler();
     private ImageView image;
     private TextView status;
     private BatteryView battery;
+    private View panel;
+    private boolean resumed, sleeping, automatic, menuOpen, destroyed, fetching;
+    private boolean requestedRefresh;
+    private String fetchUrl;
+    private volatile int requestId;
+
+    private final Runnable idleSleep = new Runnable() {
+        public void run() {
+            if (resumed && !menuOpen && !fetching) sleepNow();
+        }
+    };
+    private final Runnable watchdog = new Runnable() {
+        public void run() {
+            if (!fetching) return;
+            requestId++; // Discard any eventual completion from this timed-out request.
+            Log.w("NookPanel", "refresh exceeded 75 seconds; retaining previous frame");
+            finishRefresh(null);
+        }
+    };
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         public void onReceive(Context context, Intent intent) {
             int level = intent.getIntExtra("level", -1);
             int scale = intent.getIntExtra("scale", -1);
             int state = intent.getIntExtra("status", BatteryManager.BATTERY_STATUS_UNKNOWN);
-            int percent = level >= 0 && scale > 0
-                    ? (int) Math.min(100L, level * 100L / scale) : -1;
-            battery.setBattery(percent, state == BatteryManager.BATTERY_STATUS_CHARGING);
+            battery.setBattery(level >= 0 && scale > 0
+                    ? (int) Math.min(100L, level * 100L / scale) : -1,
+                    state == BatteryManager.BATTERY_STATUS_CHARGING);
+        }
+    };
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                sleeping = true;
+                handler.removeCallbacks(idleSleep);
+                getWindow().clearFlags(AWAKE_FLAGS);
+                PowerCycle.restoreTimeout(PanelActivity.this);
+                if (!fetching && !PowerCycle.settingsOpen) PowerCycle.wifi(PanelActivity.this, false);
+                Log.i("NookPanel", "screen off; original timeout restored");
+            } else if (sleeping && !PowerCycle.alarmStarting) {
+                sleeping = false;
+                automatic = false;
+                PowerCycle.restoreTimeout(PanelActivity.this);
+                if (resumed) foreground();
+                Log.i("NookPanel", "manual wake; menu available for 60 seconds");
+            }
         }
     };
 
-    private final Handler handler = new Handler();
-    private Runnable tick;
-    private boolean fetching;
-    private long lastFetchAt;
-
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        PowerCycle.restoreTimeout(this);
         setContentView(R.layout.panel);
-
         image = (ImageView) findViewById(R.id.panel_image);
         status = (TextView) findViewById(R.id.panel_status);
         battery = (BatteryView) findViewById(R.id.panel_battery);
-
-        // BootReceiver starts us behind the Nook's keyguard. Bring the panel
-        // onto the screen and dismiss the slide lock without a button press.
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-                | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
-
-        View.OnLongClickListener menuListener = new View.OnLongClickListener() {
-            public boolean onLongClick(View v) {
-                showMenu();
-                return true;
-            }
+        panel = (View) image.getParent();
+        acceptIntent(getIntent());
+        getWindow().addFlags(AWAKE_FLAGS);
+        View.OnLongClickListener listener = new View.OnLongClickListener() {
+            public boolean onLongClick(View view) { showMenu(); return true; }
         };
-        image.setOnLongClickListener(menuListener);
-        status.setOnLongClickListener(menuListener);
-        battery.setOnLongClickListener(menuListener);
+        image.setOnLongClickListener(listener);
+        status.setOnLongClickListener(listener);
+        battery.setOnLongClickListener(listener);
+        registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        registerReceiver(screenReceiver, filter);
+        try {
+            Bitmap cached = FrameStore.load(this);
+            if (cached != null) show(cached);
+        } catch (Throwable e) { Log.w("NookPanel", "could not load cached image", e); }
+    }
 
-        tick = new Runnable() {
-            public void run() {
-                refresh();
-                handler.postDelayed(this, Config.intervalSeconds(PanelActivity.this) * 1000L);
-            }
-        };
+    private void acceptIntent(Intent intent) {
+        automatic = intent.getBooleanExtra(PowerCycle.AUTOMATIC, false);
+        requestedRefresh = automatic;
+        intent.removeExtra(PowerCycle.AUTOMATIC);
+        sleeping = false;
+        PowerCycle.alarmStarting = false;
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        acceptIntent(intent);
+        if (resumed) foreground();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        handler.removeCallbacks(tick);
+        resumed = true;
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (sleeping && !pm.isScreenOn()) return;
+        if (sleeping) { sleeping = false; automatic = false; }
+        foreground();
+    }
 
-        // Anything that steals focus — the Nook's own "USB Mode" dialog is the
-        // usual culprit — pauses and resumes us. Refetching on every resume
-        // hammers the server and burns an e-ink refresh each time, so only go
-        // out to the network if the image we are showing is actually stale.
-        long age = System.currentTimeMillis() - lastFetchAt;
-        long interval = Config.intervalSeconds(this) * 1000L;
-        if (lastFetchAt == 0L || age >= interval) {
-            handler.post(tick);
+    private void foreground() {
+        PowerCycle.restoreTimeout(this);
+        getWindow().addFlags(AWAKE_FLAGS);
+        PowerCycle.wifi(this, true);
+        long last = Config.prefs(this).getLong("last_attempt_at", 0L);
+        boolean changed = !Config.url(this).equals(Config.prefs(this).getString("last_attempt_url", ""));
+        boolean due = System.currentTimeMillis() >= last + Config.intervalSeconds(this) * 1000L;
+        if (requestedRefresh || last == 0 || changed || due) {
+            requestedRefresh = false;
+            refresh();
         } else {
-            handler.postDelayed(tick, interval - age);
+            PowerCycle.schedule(this, last + Config.intervalSeconds(this) * 1000L);
+            armIdle();
         }
     }
 
     @Override
     protected void onPause() {
+        resumed = false;
+        handler.removeCallbacks(idleSleep);
         super.onPause();
+    }
+
+    @Override
+    public void onUserInteraction() {
+        super.onUserInteraction();
+        automatic = false;
+        armIdle();
+    }
+
+    @Override
+    protected void onDestroy() {
+        destroyed = true;
+        requestId++;
+        handler.removeCallbacksAndMessages(null);
         unregisterReceiver(batteryReceiver);
-        handler.removeCallbacks(tick);
+        unregisterReceiver(screenReceiver);
+        PowerCycle.release();
+        PowerCycle.restoreTimeout(this);
+        super.onDestroy();
+    }
+
+    private void armIdle() {
+        handler.removeCallbacks(idleSleep);
+        if (!resumed || fetching || menuOpen || sleeping || Config.url(this).length() == 0) return;
+        handler.postDelayed(idleSleep, automatic ? 5000L : MANUAL_IDLE_MS);
     }
 
     private void refresh() {
+        if (fetching) return;
         final String url = Config.url(this);
-        if (url.length() == 0) {
-            showStatus(getString(R.string.waiting));
-            return;
-        }
-        if (fetching) {
-            return;
-        }
+        if (url.length() == 0) { showStatus(getString(R.string.waiting)); return; }
+        sleeping = false;
+        getWindow().addFlags(AWAKE_FLAGS);
+        handler.removeCallbacks(idleSleep);
         fetching = true;
-
+        fetchUrl = url;
+        final int id = ++requestId;
+        PowerCycle.acquire(this);
+        PowerCycle.wifi(this, true);
+        PowerCycle.schedule(this, System.currentTimeMillis() + Config.intervalSeconds(this) * 1000L);
+        handler.postDelayed(watchdog, 75000L);
+        Log.i("NookPanel", "refresh starting; automatic=" + automatic);
         new Thread(new Runnable() {
             public void run() {
-                final Bitmap bitmap = ImageFetcher.fetch(url);
+                Bitmap result = null;
+                try {
+                    WifiManager wifi = (WifiManager) getSystemService(WIFI_SERVICE);
+                    long deadline = SystemClock.elapsedRealtime() + 25000L;
+                    while (id == requestId && SystemClock.elapsedRealtime() < deadline) {
+                        WifiInfo info = wifi == null ? null : wifi.getConnectionInfo();
+                        if (wifi != null && wifi.isWifiEnabled() && info != null && info.getIpAddress() != 0) {
+                            result = ImageFetcher.fetch(url);
+                            break;
+                        }
+                        SystemClock.sleep(500L);
+                    }
+                } catch (Throwable e) { Log.w("NookPanel", "refresh failed", e); }
+                final Bitmap bitmap = result;
                 handler.post(new Runnable() {
                     public void run() {
-                        fetching = false;
-                        lastFetchAt = System.currentTimeMillis();
-                        if (bitmap == null) {
-                            // A failed refresh must not replace the last good frame.
-                            // Keep retrying on the normal schedule; only show an
-                            // error when we have never displayed an image.
-                            if (image.getDrawable() != null) {
-                                status.setVisibility(View.GONE);
-                                image.setVisibility(View.VISIBLE);
-                                battery.setVisibility(View.VISIBLE);
-                            } else {
-                                showStatus("Could not fetch\n" + url + "\n\nLast try: " + now()
-                                        + "\n\nLong press for settings.");
-                            }
-                        } else {
-                            show(bitmap);
+                        if (destroyed || id != requestId) {
+                            if (bitmap != null) bitmap.recycle();
+                            return;
                         }
+                        finishRefresh(bitmap);
                     }
                 });
             }
-        }).start();
+        }, "NookPanel-fetch").start();
+    }
+
+    private void finishRefresh(Bitmap bitmap) {
+        handler.removeCallbacks(watchdog);
+        fetching = false;
+        long now = System.currentTimeMillis();
+        Config.prefs(this).edit().putLong("last_attempt_at", now)
+                .putString("last_attempt_url", fetchUrl).commit();
+        PowerCycle.schedule(this, now + Config.intervalSeconds(this) * 1000L);
+        if (!fetchUrl.equals(Config.url(this))) {
+            if (bitmap != null) bitmap.recycle();
+            PowerCycle.release();
+            if (resumed) foreground();
+            return;
+        }
+        if (bitmap != null) {
+            show(bitmap);
+            try { FrameStore.save(this, bitmap); }
+            catch (Throwable e) { Log.w("NookPanel", "cache write failed", e); }
+            Log.i("NookPanel", "refresh succeeded");
+        } else if (image.getDrawable() == null) {
+            showStatus("Could not fetch an image.\n\nLast try: "
+                    + DateFormat.getTimeFormat(this).format(new Date())
+                    + "\n\nLong press for settings.");
+        } else {
+            Log.i("NookPanel", "refresh failed; retained previous picture");
+        }
+        PowerCycle.release();
+        if (!resumed && !PowerCycle.settingsOpen) sleepNow();
+        else armIdle();
+    }
+
+    private void sleepNow() {
+        if (fetching || menuOpen || PowerCycle.settingsOpen || destroyed) return;
+        handler.removeCallbacks(idleSleep);
+        Bitmap screenshot = null;
+        try {
+            if (panel.getWidth() <= 0 || panel.getHeight() <= 0) throw new IllegalStateException("Panel not laid out");
+            screenshot = Bitmap.createBitmap(panel.getWidth(), panel.getHeight(), Bitmap.Config.RGB_565);
+            panel.draw(new Canvas(screenshot)); // Includes the battery indicator, without menus.
+            FrameStore.screensaver(this, screenshot);
+        } catch (Throwable e) {
+            Log.w("NookPanel", "screensaver write failed; keeping previous screensaver", e);
+        } finally {
+            if (screenshot != null) screenshot.recycle();
+        }
+        sleeping = true;
+        getWindow().clearFlags(AWAKE_FLAGS);
+        PowerCycle.release();
+        PowerCycle.wifi(this, false);
+        PowerCycle.forceSleep(this);
+        Log.i("NookPanel", "sleep requested; Wi-Fi off, RTC alarm armed");
     }
 
     private void show(Bitmap bitmap) {
         battery.setVisibility(View.VISIBLE);
         status.setVisibility(View.GONE);
         image.setVisibility(View.VISIBLE);
-
-        Bitmap previous = null;
-        if (image.getDrawable() instanceof android.graphics.drawable.BitmapDrawable) {
-            previous = ((android.graphics.drawable.BitmapDrawable) image.getDrawable()).getBitmap();
-        }
+        Bitmap old = image.getDrawable() instanceof android.graphics.drawable.BitmapDrawable
+                ? ((android.graphics.drawable.BitmapDrawable) image.getDrawable()).getBitmap() : null;
         image.setImageBitmap(bitmap);
-        // 256 MB of RAM and no generational GC worth the name: free it ourselves.
-        if (previous != null && previous != bitmap) {
-            previous.recycle();
-        }
+        if (old != null && old != bitmap) old.recycle();
     }
 
     private void showStatus(String text) {
@@ -170,27 +297,26 @@ public class PanelActivity extends Activity {
         status.setText(text);
     }
 
-    private String now() {
-        return DateFormat.getTimeFormat(this).format(new Date());
-    }
-
     private void showMenu() {
-        final CharSequence[] items = new CharSequence[] {
-                getString(R.string.refresh_now),
-                getString(R.string.settings),
-        };
-        new AlertDialog.Builder(this)
+        if (menuOpen) return;
+        automatic = false;
+        menuOpen = true;
+        handler.removeCallbacks(idleSleep);
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.menu_title)
-                .setItems(items, new DialogInterface.OnClickListener() {
+                .setItems(new CharSequence[] { getString(R.string.refresh_now), getString(R.string.settings) },
+                        new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface dialog, int which) {
-                        if (which == 0) {
-                            refresh();
-                        } else {
+                        if (which == 0) refresh();
+                        else {
+                            PowerCycle.settingsOpen = true;
                             startActivity(new Intent(PanelActivity.this, SettingsActivity.class));
                         }
                     }
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
+                }).setNegativeButton(R.string.cancel, null).create();
+        dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            public void onDismiss(DialogInterface dialog) { menuOpen = false; armIdle(); }
+        });
+        dialog.show();
     }
 }

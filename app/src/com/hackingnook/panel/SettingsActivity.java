@@ -3,6 +3,7 @@ package com.hackingnook.panel;
 import android.app.Activity;
 import android.os.Bundle;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
@@ -16,6 +17,21 @@ public class SettingsActivity extends Activity {
 
     private EditText urlField;
     private EditText intervalField;
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        PowerCycle.settingsOpen = true;
+        PowerCycle.restoreTimeout(this);
+        PowerCycle.wifi(this, true);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    @Override
+    protected void onPause() {
+        PowerCycle.settingsOpen = false;
+        super.onPause();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
