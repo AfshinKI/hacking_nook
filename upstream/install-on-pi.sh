@@ -76,6 +76,7 @@ install -m 644 "$REPO/server/mapview.py" "$APP/nook_mapview.py"
 install -m 644 "$REPO/server/linemap.py" "$APP/linemap.py"
 install -m 644 "$REPO/server/fonts.py"   "$APP/fonts.py"
 install -m 644 "$REPO/upstream/google_api_shim.py" "$APP/google/api.py"
+install -m 644 "$REPO/upstream/retrying_server.py" "$APP/retrying_server.py"
 
 # server.py hardcodes config.yaml beside itself (`cwd` on line 30 is
 # os.path.dirname(os.path.realpath(__file__)), not the process working

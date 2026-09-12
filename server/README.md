@@ -41,6 +41,15 @@ hour.
 Give the Pi a **static IP or DHCP reservation** — the Nook stores a literal URL,
 and you do not want to re-type it on an infrared touchscreen.
 
+## Image failures
+
+In renderer/mirror mode, failed downloads retry every 30 seconds (`retry_seconds`).
+Only complete PNGs replace the last good image, which is saved atomically under
+`server/.cache/` and restored after restart. The server never substitutes a local
+dashboard. Without any saved image it returns HTTP 503 with `Retry-After`, allowing
+the Nook to retain its own previous image. Successful fetches return to the normal
+`refresh_seconds` interval; the Nook's one-hour wake interval is unchanged.
+
 ## Config
 
 | Key | Meaning |
@@ -130,14 +139,14 @@ Advisories are suppressed outside `advisory_from`/`advisory_to` (06:00–22:00 b
 default) — nobody is heading out at 03:00, and the overnight `tomorrow` page is
 more useful then. Set `"advisories": false` to follow the clock alone.
 
-### The panel never goes blank
+### Keep the previous image
 
 Each fetched page is fully decoded before it is served, so a truncated or
 half-written render is rejected rather than displayed. On any failure the
 **previous good image keeps being served**, with its age logged. If there is no
-previous image at all — a cold start while the renderer is down — this server
-draws the page itself with the Pillow layouts in `layouts.py`, so the worst case
-is a simpler dashboard, never an empty screen.
+previous image in memory, it restores the last good PNG from disk. On a first-ever
+start with no cached image, it returns HTTP 503 and retries after 30 seconds.
+The Nook keeps its own previous image; no substitute dashboard is generated.
 
 Thresholds are all overridable: `advisory_hours`, `precip_probability`,
 `precip_dry_probability`, `temp_swing`, `wind_speed`.

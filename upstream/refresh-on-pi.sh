@@ -33,6 +33,7 @@ install -m 644 "$REPO/server/mapview.py" "$APP/nook_mapview.py"
 install -m 644 "$REPO/server/linemap.py" "$APP/linemap.py"
 install -m 644 "$REPO/server/fonts.py"   "$APP/fonts.py"
 install -m 644 "$REPO/upstream/google_api_shim.py" "$APP/google/api.py"
+install -m 644 "$REPO/upstream/retrying_server.py" "$APP/retrying_server.py"
 grep -q "OpenStreetMap" "$APP/google/api.py" \
     || { echo "ERROR: the shim did not land; upstream's Google version is still in place" >&2; exit 1; }
 echo "    google/api.py is ours"

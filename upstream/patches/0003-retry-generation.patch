@@ -1,0 +1,16 @@
+Retry failed image generation before giving up on the scheduled refresh.
+The adapter is copied alongside server.py by our deployment scripts.
+
+diff --git a/server/server.py b/server/server.py
+--- a/server/server.py
++++ b/server/server.py
+@@ -24,7 +24,8 @@
+ from views.daily import DailyPage
+ from views.tomorrow import TomorrowPage
+ from google.api import GoogleAPIService
+-from epd_server import DisplayServer, align_process_timezone
++from epd_server import align_process_timezone
++from retrying_server import DisplayServer
+ from epd_server.config import ConfigError, MqttSettings, load_core_config, load_yaml
+ from epd_server.source import CompositeSource, StaticSource
+ 

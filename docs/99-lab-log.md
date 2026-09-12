@@ -797,3 +797,25 @@ Validation:
 Gotchas: the automatic online window is brief, so early ADB reconnect attempts
 missed it; later logs confirmed both alarms had fired correctly. Tests used short
 intervals; we did not wait a full hour or measure multi-day battery runtime.
+
+## 2026-09-12 — Retry server generation and preserve the real dashboard
+Device: existing BNRV300 FW 1.2.2; Nook untouched. Server: nultra (192.168.4.43).
+Goal: stop replacing failed upstream renders with the simpler local dashboard.
+Did: removed the mirror-mode Pillow fallback, added an atomic disk cache of the
+last complete PNG and 30-second fetch retries. A first start without any good
+image returns HTTP 503/Retry-After. Added upstream patch 0003 and a DisplayServer
+adapter with three generation attempts, waiting 30 then 60 seconds; shutdown
+interrupts waits. Install/update scripts and Docker include the adapter.
+Validation: six unittest cases cover download failure, corrupt PNG rejection,
+persistence across restart, HTTP 503, retry backoff/exhaustion, shutdown, and skipped
+pages. Python compilation, shell syntax and patch application checks passed.
+Deployment: copied the server and adapter to nultra, backed up replaced files in
+/tmp/nook-before-retry, applied only patch 0003 to the deployed upstream checkout,
+then restarted nookpanel before weather-cal. Restarted nookpanel again while
+weather-cal was generating; curl/cmp confirmed byte-identical previous images
+both during renderer downtime and after loading the cache from disk. Logs show
+HTTP 200 for the cached image and retrying refused renderer connections.
+Result: no substitute image on failure. Hourly Nook wake schedule is unchanged.
+Recovery: weather-cal finished all four pages at 15:23:15 (Pi local time), resumed
+HTTP on port 8082, and nookpanel automatically fetched today.png at 15:23:45.
+Both services were active; no manual refresh was needed.

@@ -9,6 +9,7 @@
   "map_strength": 0.7,
   "landscape": false,
   "refresh_seconds": 300,
+  "retry_seconds": 30,
   "port": 8000,
   "_comment": "renderer_url points at weather-cal on THIS machine. Unset it to draw pages here instead.",
   "renderer_url": "http://127.0.0.1:8082",

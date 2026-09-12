@@ -25,6 +25,9 @@ Endpoints:
 
 import argparse
 import io
+import hashlib
+from pathlib import Path
+import tempfile
 import json
 import logging
 import os
@@ -60,6 +63,7 @@ DEFAULT_CONFIG = {
     "map_zoom": 11,             # 10 = region, 12 = city centre
     "landscape": False,
     "refresh_seconds": 300,
+    "retry_seconds": 30,        # retry unavailable/damaged renderer pages sooner
     "port": 8000,
 }
 
@@ -74,15 +78,15 @@ class RenderedPages:
     previous good image keeps being served until a new one validates.
     """
 
-    def __init__(self, config, fallback=None):
+    def __init__(self, config, cache_dir):
         self.config = config
         self.base = (config.get("renderer_url")
                      or config.get("mirror_base")   # old name, still honoured
                      or "").rstrip("/")
-        # Rendered locally when upstream has never answered. Without it a cold
-        # start against a dead upstream serves a zero-byte PNG, and the panel
-        # shows nothing at all.
-        self.fallback = fallback
+        source = self.base or config.get("mirror_url", "")
+        key = hashlib.sha256(source.encode()).hexdigest()[:16]
+        self.cache_path = Path(cache_dir) / ("last-rendered-" + key + ".png")
+        self.retrying = False
         self.png = b""
         self.fetched_at = None
         self.page = None
@@ -91,6 +95,16 @@ class RenderedPages:
         # Only needed to decide *which* page to show; the image itself is
         # upstream's. A failed weather fetch just means we follow the clock.
         self.weather = Weather(config) if self.base else None
+        try:
+            body = self.cache_path.read_bytes()
+            if _is_complete_png(body):
+                self.png = body
+                self.fetched_at = self.cache_path.stat().st_mtime
+                LOG.info("loaded last good renderer image from disk")
+        except FileNotFoundError:
+            pass
+        except OSError:
+            LOG.exception("could not read cached renderer image")
         self.refresh()
 
     def _target(self):
@@ -130,29 +144,42 @@ class RenderedPages:
             self._degrade()
             return
 
+        self._save(body)
+        self.retrying = False
         with self.lock:
             self.png = body
             self.fetched_at = time.time()
             self.page = page
         LOG.info("serving %s (%d bytes)", page or url, len(body))
 
-    def _degrade(self):
-        """Keep the last good image, or render one ourselves if there is none."""
-        if self.png:
-            LOG.info("keeping the previous image (%s old)", self._age())
-            return
-        if not self.fallback:
-            LOG.error("nothing cached and no fallback renderer; panel will be blank")
-            return
+    def _save(self, body):
+        temporary = None
         try:
-            self.fallback.refresh()
-            with self.lock:
-                self.png = self.fallback.current()
-                self.fetched_at = time.time()
-                self.page = "local"
-            LOG.warning("renderer unavailable; drawing the page ourselves instead")
-        except Exception:
-            LOG.exception("fallback render failed too")
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=self.cache_path.parent, delete=False) as handle:
+                temporary = handle.name
+                handle.write(body)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.cache_path)
+        except OSError:
+            LOG.exception("could not persist renderer image; keeping it in memory")
+        finally:
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    LOG.warning("could not remove temporary renderer cache %s", temporary)
+
+    def _degrade(self):
+        """Never draw a replacement dashboard; retry while retaining the last good one."""
+        self.retrying = True
+        if self.png:
+            LOG.warning("renderer unavailable; keeping previous image (%s old); retrying", self._age())
+        else:
+            LOG.warning("renderer unavailable; no cached image yet; returning 503 and retrying")
 
     def _age(self):
         if not self.fetched_at:
@@ -167,11 +194,12 @@ class RenderedPages:
     def run_forever(self):
         interval = self.config.get("refresh_seconds", 300)
         while True:
-            time.sleep(interval)
+            time.sleep(max(1, self.config.get("retry_seconds", 30)) if self.retrying else interval)
             try:
                 self.refresh()
             except Exception:
-                LOG.exception("mirror refresh failed")
+                self.retrying = True
+                LOG.exception("mirror refresh failed; retrying")
 
 
 class Renderer:
@@ -239,6 +267,13 @@ def make_handler(renderer):
             path = urllib.parse.urlparse(self.path).path
             if path in ("/panel.png", "/panel"):
                 body = renderer.current()
+                if not body:
+                    self.send_response(503)
+                    self.send_header("Retry-After", str(max(1, renderer.config.get("retry_seconds", 30))))
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", "image/png")
                 self.send_header("Content-Length", str(len(body)))
@@ -310,16 +345,13 @@ def main():
 
     if pages_from:
         LOG.info("serving pages from %s", pages_from)
-        fallback = None
-        try:
-            fallback = Renderer(config, cache_dir)
-        except Exception:
-            LOG.exception("could not prepare the local fallback renderer")
-        renderer = RenderedPages(config, fallback=fallback)
+        renderer = RenderedPages(config, cache_dir)
     else:
         renderer = Renderer(config, cache_dir)
 
     if args.once:
+        if not renderer.current():
+            raise SystemExit("No good image available yet; retry when the renderer is ready")
         with open(args.once, "wb") as handle:
             handle.write(renderer.current())
         print("wrote", args.once)

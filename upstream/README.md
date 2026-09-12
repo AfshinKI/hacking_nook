@@ -4,7 +4,7 @@ This runs [chrisjtwomey/inkplate10-weather-cal](https://github.com/chrisjtwomey/
 itself — its HTML/CSS page layouts, Chart.js and rough.js bars, Selenium and
 headless Chromium — rather than our re-implementation in `../server`.
 
-**One file is replaced.** Upstream builds its map with Google Static Maps, and
+**The Google API adapter is replaced.** Upstream builds its map with Google Static Maps, and
 `server.py` constructs `GoogleAPIService` unconditionally at startup:
 
 ```
@@ -14,7 +14,7 @@ ValueError: Invalid API key provided.
 That makes a Google Cloud project with billing a hard requirement.
 [`google_api_shim.py`](google_api_shim.py) provides the same class with the
 same contract, backed by keyless OpenStreetMap tiles and Open-Meteo geocoding.
-Everything else is upstream's, untouched.
+Local patches and adapters also customize page selection, charts, and generation retries.
 
 Weather needs no key either: upstream ships an `openmeteo` provider.
 
@@ -210,3 +210,15 @@ Docker image is pulled from upstream's `:latest` tag. Our patch is one file
 against a small, stable contract — `get_static_map_local_src(map_id, location)`
 returning a path relative to `views/html/`. If upstream changes that signature,
 the shim needs updating; nothing else here will notice.
+
+## Generation failures
+
+`retrying_server.py`, enabled by patch `0003`, retries a failed generation after
+30 seconds and then 60 seconds (three attempts total). Retries refresh source data
+and use the upstream rendering lock and atomic PNG writes. Existing page images
+remain available. After three failures the normal scheduler/systemd recovery takes
+over; shutdown interrupts the retry delay. Both native install/update scripts and
+the Docker image install the adapter. The panel proxy retains its disk-cached last
+good image while the renderer recovers.
+
+Run failure-path tests with `python3 -m unittest discover -s tests` from the repo root.
